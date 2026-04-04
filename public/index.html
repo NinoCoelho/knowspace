@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Client Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --bg-primary: #FAF9F6;
+      --bg-secondary: #F5F3EE;
+      --bg-chat: #FFFFFF;
+      --text-primary: #4A4A4A;
+      --text-secondary: #6B6B6B;
+      --accent-primary: #D4A574;
+      --accent-secondary: #C4956A;
+      --border-light: #E8E4DD;
+      --shadow-subtle: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+    }
+    
+    .sidebar {
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-light);
+    }
+    
+    .nav-item {
+      transition: all 0.2s ease;
+    }
+    
+    .nav-item:hover, .nav-item.active {
+      background: rgba(212, 165, 116, 0.1);
+      color: var(--accent-primary);
+    }
+    
+    .chat-container {
+      background: var(--bg-chat);
+      box-shadow: var(--shadow-subtle);
+    }
+    
+    .message {
+      max-width: 70%;
+      padding: 12px 16px;
+      border-radius: 18px;
+      line-height: 1.5;
+    }
+    
+    .message.user {
+      background: var(--accent-primary);
+      color: white;
+      margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+    
+    .message.assistant {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      margin-right: auto;
+      border-bottom-left-radius: 4px;
+    }
+    
+    .vault-item {
+      cursor: pointer;
+      transition: all 0.2s ease;
+      padding: 12px 16px;
+      border-radius: 8px;
+    }
+    
+    .vault-item:hover {
+      background: rgba(212, 165, 116, 0.05);
+    }
+    
+    .kanban-column {
+      background: var(--bg-secondary);
+      min-height: 500px;
+    }
+    
+    .kanban-card {
+      background: white;
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      cursor: grab;
+      transition: all 0.2s ease;
+    }
+    
+    .kanban-card:active {
+      cursor: grabbing;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    .kanban-card.dragging {
+      opacity: 0.5;
+      transform: rotate(3deg);
+    }
+    
+    .drop-zone {
+      border: 2px dashed var(--border-light);
+      border-radius: 8px;
+      min-height: 100px;
+      transition: all 0.2s ease;
+    }
+    
+    .drop-zone.active {
+      border-color: var(--accent-primary);
+      background: rgba(212, 165, 116, 0.05);
+    }
+
+    .prose {
+      max-width: 65ch;
+      line-height: 1.7;
+    }
+
+    .prose h1, .prose h2, .prose h3 {
+      margin-top: 1.5em;
+      margin-bottom: 0.5em;
+      font-weight: 600;
+    }
+
+    .prose h1 { font-size: 2em; }
+    .prose h2 { font-size: 1.5em; }
+    .prose h3 { font-size: 1.25em; }
+
+    .prose p { margin-bottom: 1em; }
+
+    .prose ul, .prose ol {
+      padding-left: 1.5em;
+    }
+
+    .prose li {
+      margin-bottom: 0.5em;
+    }
+
+    .prose a {
+      color: var(--accent-primary);
+      text-decoration: underline;
+    }
+
+    .prose img {
+      max-width: 100%;
+      border-radius: 8px;
+      margin: 1em 0;
+    }
+
+    .prose code {
+      background: var(--bg-secondary);
+      padding: 0.2em 0.4em;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    .prose pre {
+      background: var(--bg-secondary);
+      padding: 1em;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+
+    .prose blockquote {
+      border-left: 4px solid var(--accent-primary);
+      padding-left: 1em;
+      margin: 1em 0;
+      color: var(--text-secondary);
+    }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 600px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    .kanban-item {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      cursor: move;
+      transition: all 0.2s ease;
+    }
+
+    .kanban-item:hover {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .kanban-item.dragging-item {
+      opacity: 0.5;
+    }
+  </style>
+</head>
+<body class="h-screen flex">
+  <!-- Sidebar -->
+  <aside class="sidebar w-64 flex flex-col">
+    <div class="p-6">
+      <h1 class="text-xl font-semibold mb-2">Portal</h1>
+      <p class="text-sm text-gray-500" id="clientName">Loading...</p>
+    </div>
+    
+    <nav class="flex-1 px-3">
+      <a href="#" class="nav-item flex items-center px-4 py-3 rounded-lg mb-1 active" data-view="chat">
+        <i class="fas fa-comment w-5"></i>
+        <span class="ml-3">Chat</span>
+      </a>
+      <a href="#" class="nav-item flex items-center px-4 py-3 rounded-lg mb-1" data-view="vault">
+        <i class="fas fa-folder w-5"></i>
+        <span class="ml-3">Vault</span>
+      </a>
+      <a href="#" class="nav-item flex items-center px-4 py-3 rounded-lg mb-1" data-view="kanban">
+        <i class="fas fa-columns w-5"></i>
+        <span class="ml-3">Kanban</span>
+      </a>
+    </nav>
+    
+    <div class="p-4 border-t border-gray-200">
+      <p class="text-xs text-gray-400">Powered by OpenClaw</p>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-1 flex flex-col">
+    <!-- Chat View -->
+    <div id="chatView" class="flex-1 flex flex-col">
+      <div class="chat-container flex-1 m-6 rounded-2xl flex flex-col overflow-hidden">
+        <div class="flex-1 overflow-y-auto p-6 space-y-4" id="messages">
+          <!-- Messages will be inserted here -->
+        </div>
+        
+        <div class="p-4 border-t" style="border-color: var(--border-light);">
+          <div class="flex gap-3">
+            <input type="text" id="messageInput" 
+                   class="flex-1 px-4 py-3 rounded-xl border-0 focus:outline-none focus:ring-2"
+                   style="background: var(--bg-secondary);"
+                   placeholder="Type a message...">
+            <button id="sendButton" 
+                    class="px-6 py-3 rounded-xl text-white font-medium transition-all hover:opacity-90"
+                    style="background: var(--accent-primary);">
+              <i class="fas fa-paper-plane"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vault View -->
+    <div id="vaultView" class="flex-1 hidden m-6">
+      <div class="flex h-full rounded-2xl overflow-hidden" style="background: var(--bg-chat);">
+        <div class="w-1/3 border-r overflow-y-auto" style="border-color: var(--border-light);">
+          <div class="p-4 border-b" style="border-color: var(--border-light);">
+            <input type="text" id="vaultSearch" 
+                   class="w-full px-4 py-2 rounded-lg border-0"
+                   style="background: var(--bg-secondary);"
+                   placeholder="Search vault...">
+            <button id="uploadBtn" class="mt-2 w-full px-4 py-2 rounded-lg text-white font-medium"
+                    style="background: var(--accent-primary);">
+              <i class="fas fa-upload mr-2"></i>Upload File
+            </button>
+          </div>
+          <div id="vaultTree" class="p-2"></div>
+        </div>
+        
+        <div class="flex-1 flex flex-col">
+          <div class="p-4 border-b" style="border-color: var(--border-light);">
+            <h2 id="vaultFileName" class="font-semibold">Select a file</h2>
+          </div>
+          <div id="vaultContent" class="flex-1 overflow-y-auto p-6"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Kanban View -->
+    <div id="kanbanView" class="flex-1 hidden m-6">
+      <div class="flex h-full gap-4 overflow-x-auto pb-4" id="kanbanBoard"></div>
+    </div>
+  </main>
+
+  <!-- Card Editor Modal -->
+  <div id="cardModal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">Edit Card</h3>
+        <button id="closeModal" class="text-gray-500 hover:text-gray-700">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-2">Card Title</label>
+        <input type="text" id="cardTitle" class="w-full px-3 py-2 rounded-lg border" 
+               style="border-color: var(--border-light);">
+      </div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-2">Items</label>
+        <div id="cardItems" class="space-y-2 mb-2"></div>
+        
+        <div class="flex gap-2">
+          <button id="addSection" class="px-3 py-1 rounded text-sm" style="background: var(--bg-secondary);">
+            <i class="fas fa-heading mr-1"></i>Add Section
+          </button>
+          <button id="addBullet" class="px-3 py-1 rounded text-sm" style="background: var(--bg-secondary);">
+            <i class="fas fa-list mr-1"></i>Add Bullet
+          </button>
+          <button id="addCheckbox" class="px-3 py-1 rounded text-sm" style="background: var(--bg-secondary);">
+            <i class="fas fa-check-square mr-1"></i>Add Checkbox
+          </button>
+        </div>
+      </div>
+      
+      <div class="flex justify-end gap-2">
+        <button id="cancelCard" class="px-4 py-2 rounded-lg" style="background: var(--bg-secondary);">
+          Cancel
+        </button>
+        <button id="saveCard" class="px-4 py-2 rounded-lg text-white" style="background: var(--accent-primary);">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
