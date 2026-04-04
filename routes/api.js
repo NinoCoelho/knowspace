@@ -48,16 +48,34 @@ router.get('/vault', (req, res) => {
 router.get('/vault/file', (req, res) => {
   const clientSlug = req.clientSlug;
   const filePath = req.query.path;
-  
+
   if (!filePath) {
     return res.status(400).json({ error: 'File path required' });
   }
-  
-  const fullPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', filePath);
-  
+
+  const vaultBase = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const fullPath = path.resolve(vaultBase, filePath);
+
+  // Prevent path traversal
+  if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
   try {
-    const content = fs.readFileSync(fullPath, 'utf8');
-    res.send(content);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const ext = path.extname(fullPath).toLowerCase();
+    const textExts = ['.md', '.markdown', '.txt', '.json', '.csv'];
+
+    if (textExts.includes(ext)) {
+      const content = fs.readFileSync(fullPath, 'utf8');
+      res.send(content);
+    } else {
+      // Send binary files (images, videos) properly
+      res.sendFile(fullPath);
+    }
   } catch (error) {
     console.error('Error reading file:', error);
     res.status(404).json({ error: 'File not found' });

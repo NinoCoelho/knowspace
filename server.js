@@ -187,7 +187,7 @@ app.get('/auth', (req, res) => {
   // Set secure httpOnly cookie
   res.cookie('auth_token', token, {
     httpOnly: false, // Allow JavaScript to access for Socket.IO
-    secure: process.env.NODE_ENV === 'production',
+    secure: true, // Served over HTTPS via Tailscale
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     sameSite: 'lax'
   });
@@ -379,7 +379,9 @@ io.on('connection', (socket) => {
       }
 
       // Build command
-      let cmd = `openclaw agent --agent ${socket.clientSlug} --message "${messageText.replace(/"/g, '\\"')}" --json`;
+      // Escape shell metacharacters to prevent injection
+      const safeMessage = messageText.replace(/[\\"`$!]/g, '\\$&');
+      let cmd = `openclaw agent --agent ${socket.clientSlug} --message "${safeMessage}" --json`;
       if (sessionId) {
         cmd += ` --session-id ${sessionId}`;
       }
