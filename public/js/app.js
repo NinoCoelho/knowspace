@@ -313,6 +313,8 @@ async function loadClientInfo() {
 }
 
 // Vault functionality
+let currentFile = null;
+
 async function loadVault() {
   try {
     const res = await fetch(`/api/vault?token=${token}`);
@@ -362,45 +364,79 @@ function renderTreeNode(node, container, level) {
     if (aIsFile === bIsFile) return a.localeCompare(b);
     return aIsFile ? 1 : -1; // Folders first
   });
-  
+
   sortedKeys.forEach(key => {
     const value = node[key];
     const isFile = value.__file;
-    
-    const item = document.createElement('div');
-    item.className = isFile ? 'vault-item file' : 'vault-item folder';
-    
+
     if (isFile) {
+      const item = document.createElement('div');
+      item.className = 'vault-item file';
+      item.dataset.filePath = value.__file.path;
+
       const ext = key.split('.').pop().toLowerCase();
       const icon = getFileIcon(ext);
       const cleanName = key.replace(/\.(md|markdown)$/, '');
+
+      if (currentFile && currentFile.path === value.__file.path) {
+        item.classList.add('active');
+      }
+
       item.innerHTML = `
-        <i class="fas ${icon} mr-2 text-sm" style="color: var(--accent-primary);"></i>
-        <span class="text-sm">${cleanName}</span>
+        <i class="fas ${icon} item-icon" style="color: var(--accent-light);"></i>
+        <span class="item-label">${cleanName}</span>
       `;
-      item.addEventListener('click', () => loadFile(value.__file));
-    } else {
-      item.innerHTML = `
-        <i class="fas fa-folder mr-2 text-sm" style="color: var(--accent-primary);"></i>
-        <span class="text-sm font-medium">${key}</span>
-        <i class="fas fa-chevron-down ml-auto text-xs"></i>
-      `;
-      
-      const childContainer = document.createElement('div');
-      childContainer.className = 'hidden';
-      item.appendChild(childContainer);
-      
+
       item.addEventListener('click', (e) => {
         e.stopPropagation();
-        childContainer.classList.toggle('hidden');
-        const chevron = item.querySelector('.fa-chevron-down');
-        chevron.classList.toggle('rotate-180');
+        loadFile(value.__file);
       });
-      
+
+      container.appendChild(item);
+    } else {
+      const wrapper = document.createElement('div');
+
+      const item = document.createElement('div');
+      item.className = 'vault-item folder';
+
+      const chevron = document.createElement('i');
+      chevron.className = 'fas fa-chevron-right chevron';
+
+      item.innerHTML = `
+        <i class="fas fa-chevron-right chevron"></i>
+        <i class="fas fa-folder item-icon" style="color: var(--accent-light);"></i>
+        <span class="item-label" style="font-weight: 500;">${key}</span>
+      `;
+
+      const childContainer = document.createElement('div');
+      childContainer.className = 'folder-children';
+      // Auto-expand first level
+      if (level > 0) childContainer.classList.add('hidden');
+
+      const chevronEl = item.querySelector('.chevron');
+      if (level === 0) {
+        chevronEl.classList.add('open');
+        item.querySelector('.fa-folder').classList.replace('fa-folder', 'fa-folder-open');
+      }
+
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = !childContainer.classList.contains('hidden');
+        childContainer.classList.toggle('hidden');
+        chevronEl.classList.toggle('open');
+        const folderIcon = item.querySelector('.item-icon');
+        if (isOpen) {
+          folderIcon.classList.replace('fa-folder-open', 'fa-folder');
+        } else {
+          folderIcon.classList.replace('fa-folder', 'fa-folder-open');
+        }
+      });
+
+      wrapper.appendChild(item);
       renderTreeNode(value, childContainer, level + 1);
+      wrapper.appendChild(childContainer);
+      container.appendChild(wrapper);
     }
-    
-    container.appendChild(item);
   });
 }
 
@@ -424,12 +460,19 @@ async function loadFile(file) {
   try {
     const res = await fetch(`/api/vault/file?token=${token}&path=${file.path}`);
     const content = await res.text();
-    
+
     const ext = file.path.split('.').pop().toLowerCase();
     const cleanName = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
-    
+
     vaultFileName.textContent = cleanName;
-    
+
+    currentFile = file;
+
+    // Update active state
+    document.querySelectorAll('.vault-item.file').forEach(el => {
+      el.classList.toggle('active', el.dataset.filePath === file.path);
+    });
+
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
       const imagePath = `/api/vault/file?token=${token}&path=${file.path}`;
       vaultContent.innerHTML = `<img src="${imagePath}" alt="${cleanName}" class="max-w-full rounded-lg">`;
@@ -453,26 +496,35 @@ async function loadFile(file) {
 // Search
 vaultSearch.addEventListener('input', (e) => {
   const query = e.target.value.toLowerCase();
-  
+
   if (!query) {
     renderVaultTree();
     return;
   }
-  
-  const filtered = vaultFiles.filter(f => 
+
+  const filtered = vaultFiles.filter(f =>
     f.path.toLowerCase().includes(query)
   );
-  
+
   vaultTree.innerHTML = '';
   filtered.forEach(file => {
     const item = document.createElement('div');
     item.className = 'vault-item file';
+
+    // Add active class for current file
+    if (currentFile && currentFile.path === file.path) {
+      item.classList.add('active');
+    }
+
     const ext = file.path.split('.').pop().toLowerCase();
     item.innerHTML = `
-      <i class="fas ${getFileIcon(ext)} mr-2 text-sm" style="color: var(--accent-primary);"></i>
+      <i class="fas ${getFileIcon(ext)}" style="color: var(--accent-light); font-size: 14px;"></i>
       <span class="text-sm">${file.path}</span>
     `;
-    item.addEventListener('click', () => loadFile(file));
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      loadFile(file);
+    });
     vaultTree.appendChild(item);
   });
 });
@@ -536,6 +588,36 @@ function getDefaultKanban() {
   };
 }
 
+function renderCardContent(card) {
+  const migrated = migrateCard(card);
+  let html = '';
+
+  if (migrated.title) {
+    html += `<div class="card-title">${escapeHtml(migrated.title)}</div>`;
+  }
+
+  if (migrated.items && migrated.items.length > 0) {
+    html += '<div class="card-body">';
+    migrated.items.forEach((item, idx) => {
+      if (item.type === 'section') {
+        html += `<div class="card-section">${escapeHtml(item.content)}</div>`;
+      } else if (item.type === 'bullet') {
+        html += `<div class="card-bullet"><span>${escapeHtml(item.content)}</span></div>`;
+      } else if (item.type === 'checkbox') {
+        const checkedClass = item.checked ? 'checked' : '';
+        const checkedAttr = item.checked ? 'checked' : '';
+        html += `<div class="card-checkbox ${checkedClass}">
+          <input type="checkbox" ${checkedAttr} data-item-index="${idx}">
+          <span>${escapeHtml(item.content)}</span>
+        </div>`;
+      }
+    });
+    html += '</div>';
+  }
+
+  return html;
+}
+
 function renderKanban() {
   kanbanBoard.innerHTML = '';
 
@@ -544,50 +626,34 @@ function renderKanban() {
     column.className = 'kanban-column flex-1 min-w-64 rounded-lg p-4';
     column.dataset.laneId = lane.id;
 
+    const cardsHtml = lane.cards.map((card, index) => {
+      return `
+        <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}" data-lane-id="${lane.id}">
+          ${renderCardContent(card)}
+          <div class="card-actions">
+            <button class="edit-card-btn" data-card-id="${card.id}" title="Edit">
+              <i class="fas fa-pen text-xs"></i>
+            </button>
+            <button class="delete-card-btn" data-card-id="${card.id}" title="Delete">
+              <i class="fas fa-trash text-xs"></i>
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+
     column.innerHTML = `
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="font-semibold">${lane.title}</h3>
-        <button class="add-card-btn text-sm px-2 py-1 rounded hover:bg-white" style="color: var(--accent-primary);">
+      <div class="lane-header">
+        <div class="flex items-center">
+          <h3>${escapeHtml(lane.title)}</h3>
+          <span class="lane-count">${lane.cards.length}</span>
+        </div>
+        <button class="add-card-btn" style="border:none;background:none;cursor:pointer;color:var(--accent-primary);font-size:14px;padding:4px 8px;border-radius:6px;transition:background 0.15s;"
+                onmouseover="this.style.background='rgba(212,165,116,0.1)'" onmouseout="this.style.background='none'">
           <i class="fas fa-plus"></i>
         </button>
       </div>
-      <div class="cards-container space-y-2 min-h-96 drop-zone" data-lane-id="${lane.id}">
-        ${lane.cards.map((card, index) => {
-          const migrated = migrateCard(card);
-          let contentHtml = '';
-          if (migrated.title) {
-            contentHtml += `<div class="font-semibold mb-2">${escapeHtml(migrated.title)}</div>`;
-          }
-          if (migrated.items && migrated.items.length > 0) {
-            contentHtml += '<div class="space-y-1">';
-            migrated.items.forEach(item => {
-              if (item.type === 'section') {
-                contentHtml += `<div class="font-medium text-sm">${escapeHtml(item.content)}</div>`;
-              } else if (item.type === 'bullet') {
-                contentHtml += `<div class="text-sm">• ${escapeHtml(item.content)}</div>`;
-              } else if (item.type === 'checkbox') {
-                const checked = item.checked ? 'x' : ' ';
-                contentHtml += `<div class="text-sm">- [${checked}] ${escapeHtml(item.content)}</div>`;
-              }
-            });
-            contentHtml += '</div>';
-          }
-
-          return `
-          <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}">
-            <div class="flex items-start justify-between">
-              <div class="text-sm prose">${contentHtml}</div>
-              <div class="flex gap-2 ml-2">
-                <button class="edit-card-btn text-gray-400 hover:text-blue-600" data-card-id="${card.id}">
-                  <i class="fas fa-edit text-xs"></i>
-                </button>
-                <button class="delete-card-btn text-gray-400 hover:text-red-600" data-card-id="${card.id}">
-                  <i class="fas fa-trash text-xs"></i>
-                </button>
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
+      <div class="cards-container space-y-2 drop-zone" data-lane-id="${lane.id}" style="min-height: 80px;">
+        ${cardsHtml}
       </div>
     `;
 
@@ -605,16 +671,34 @@ function renderKanban() {
     column.querySelectorAll('.edit-card-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const cardId = btn.dataset.cardId;
-        openCardModal(lane.id, cardId);
+        openCardModal(lane.id, btn.dataset.cardId);
       });
     });
 
     column.querySelectorAll('.delete-card-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const cardId = btn.dataset.cardId;
-        deleteCard(lane.id, cardId);
+        deleteCard(lane.id, btn.dataset.cardId);
+      });
+    });
+
+    // Checkbox toggle on cards
+    column.querySelectorAll('.card-checkbox input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const cardEl = cb.closest('.kanban-card');
+        const cardId = cardEl.dataset.cardId;
+        const laneId = cardEl.dataset.laneId;
+        const itemIndex = parseInt(cb.dataset.itemIndex);
+        const cardLane = currentKanban.lanes.find(l => l.id === laneId);
+        const card = cardLane.cards.find(c => c.id === cardId);
+        const migrated = migrateCard(card);
+        if (migrated.items[itemIndex]) {
+          migrated.items[itemIndex].checked = cb.checked;
+          card.items = migrated.items;
+          saveKanban();
+          renderKanban();
+        }
       });
     });
 
@@ -633,10 +717,8 @@ function renderKanban() {
     cardsContainer.addEventListener('drop', (e) => {
       e.preventDefault();
       cardsContainer.classList.remove('active');
-
       const cardIndex = e.dataTransfer.getData('cardIndex');
       const sourceLaneId = e.dataTransfer.getData('sourceLaneId');
-
       if (cardIndex && sourceLaneId) {
         moveCard(sourceLaneId, lane.id, parseInt(cardIndex));
       }
@@ -650,7 +732,6 @@ function renderKanban() {
       e.dataTransfer.setData('sourceLaneId', card.closest('.cards-container').dataset.laneId);
       card.classList.add('dragging');
     });
-
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging');
     });
@@ -659,8 +740,7 @@ function renderKanban() {
   // Add lane button
   const addLaneBtn = document.createElement('button');
   addLaneBtn.className = 'px-6 py-3 rounded-lg font-medium min-w-64';
-  addLaneBtn.style.background = 'var(--bg-secondary)';
-  addLaneBtn.style.color = 'var(--accent-light)';
+  addLaneBtn.style.cssText = 'background:var(--bg-secondary);color:var(--accent-light);border:2px dashed var(--border-light);cursor:pointer;transition:all 0.15s;';
   addLaneBtn.innerHTML = '<i class="fas fa-plus mr-2"></i>Add Lane';
   addLaneBtn.addEventListener('click', addLane);
   kanbanBoard.appendChild(addLaneBtn);
@@ -728,43 +808,7 @@ socket.on('connect_error', (error) => {
   console.error('Connection error:', error);
   alert('Authentication failed');
 });
-// Add to existing app.js after chat functionality
-
-// Typing indicator
-socket.on('typing', (data) => {
-  if (data.typing) {
-    const typingDiv = document.createElement('div');
-    typingDiv.className = 'message assistant typing-indicator';
-    typingDiv.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-    messagesDiv.appendChild(typingDiv);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-  } else {
-    const typing = messagesDiv.querySelector('.typing-indicator');
-    if (typing) typing.remove();
-  }
-});
-// Load chat history on connect
-async function loadChatHistory() {
-  try {
-    const res = await fetch(`/api/chat/history?token=${token}`);
-    const data = await res.json();
-    
-    if (data.messages && data.messages.length > 0) {
-      data.messages.forEach(msg => {
-        addMessage(msg.content, msg.role, false);
-      });
-    }
-  } catch (error) {
-    console.error('Failed to load chat history:', error);
-  }
-}
-
-// Call on connect
-socket.on('connect', () => {
-  console.log('Connected to server');
-  loadClientInfo();
-  loadChatHistory();
-});
+// Load chat history from OpenClaw session (sent by server on connect)
 
 // Load chat history from OpenClaw session
 socket.on('chat:history', (data) => {
@@ -791,6 +835,8 @@ function escapeHtml(text) {
 // Kanban Modal State
 let editingCard = null;
 let currentCardItems = [];
+let currentCardTitle = '';
+let modalTab = 'preview';
 
 // Modal button handlers
 document.getElementById('addSection').addEventListener('click', () => addItem('section'));
@@ -800,22 +846,80 @@ document.getElementById('saveCard').addEventListener('click', saveCard);
 document.getElementById('closeModal').addEventListener('click', closeModal);
 document.getElementById('cancelCard').addEventListener('click', closeModal);
 
+// Tab switching
+document.getElementById('tabPreview').addEventListener('click', () => switchModalTab('preview'));
+document.getElementById('tabEdit').addEventListener('click', () => switchModalTab('edit'));
+
+function switchModalTab(tab) {
+  modalTab = tab;
+  document.getElementById('tabPreview').classList.toggle('active', tab === 'preview');
+  document.getElementById('tabEdit').classList.toggle('active', tab === 'edit');
+  document.getElementById('cardPreviewPane').classList.toggle('hidden', tab !== 'preview');
+  document.getElementById('cardEditPane').classList.toggle('hidden', tab !== 'edit');
+
+  if (tab === 'preview') {
+    // Sync title from edit input
+    const titleInput = document.getElementById('cardTitle');
+    if (titleInput) currentCardTitle = titleInput.value;
+    renderCardPreview();
+  }
+}
+
+function renderCardPreview() {
+  const container = document.getElementById('cardPreviewPane');
+  let html = '';
+
+  if (currentCardTitle) {
+    html += `<div class="preview-title">${escapeHtml(currentCardTitle)}</div>`;
+  }
+
+  if (currentCardItems.length === 0 && !currentCardTitle) {
+    html += '<div class="preview-empty">This card is empty. Switch to Edit to add content.</div>';
+  }
+
+  currentCardItems.forEach(item => {
+    if (item.type === 'section') {
+      html += `<div class="preview-section">${escapeHtml(item.content)}</div>`;
+    } else if (item.type === 'bullet') {
+      html += `<div class="preview-bullet"><span>${escapeHtml(item.content)}</span></div>`;
+    } else if (item.type === 'checkbox') {
+      const checkedClass = item.checked ? 'checked' : '';
+      const checkedAttr = item.checked ? 'checked' : '';
+      html += `<div class="preview-checkbox ${checkedClass}">
+        <input type="checkbox" ${checkedAttr} disabled>
+        <span>${escapeHtml(item.content)}</span>
+      </div>`;
+    }
+  });
+
+  container.innerHTML = html;
+}
+
 // Open modal for editing card
 function openCardModal(laneId, cardId) {
   const lane = currentKanban.lanes.find(l => l.id === laneId);
   const card = lane.cards.find(c => c.id === cardId);
 
-  // Migrate old format if needed
   const migratedCard = migrateCard(card);
 
   editingCard = { laneId, cardId };
-  currentCardItems = migratedCard.items || [];
+  currentCardItems = JSON.parse(JSON.stringify(migratedCard.items || []));
+  currentCardTitle = migratedCard.title || '';
 
-  document.getElementById('cardTitle').value = migratedCard.title || '';
+  document.getElementById('cardTitle').value = currentCardTitle;
+  document.getElementById('modalTitle').textContent = currentCardTitle || 'Card';
+
+  // Start on preview tab
+  switchModalTab('preview');
   renderCardItems();
 
   document.getElementById('cardModal').classList.remove('hidden');
 }
+
+// Close modal on overlay click
+document.getElementById('cardModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('cardModal')) closeModal();
+});
 
 // Migrate old card format to new structure
 function migrateCard(card) {
@@ -829,7 +933,7 @@ function migrateCard(card) {
   return card;
 }
 
-// Render items in modal
+// Render items in modal editor
 function renderCardItems() {
   const container = document.getElementById('cardItems');
   container.innerHTML = '';
@@ -837,31 +941,28 @@ function renderCardItems() {
   currentCardItems.forEach((item, index) => {
     const div = document.createElement('div');
     div.className = 'card-item';
-    div.dataset.index = index;
 
-    const iconClass = {
-      'section': 'fa-heading',
-      'bullet': 'fa-circle',
-      'checkbox': 'fa-check-square'
-    }[item.type];
+    const iconMap = { 'section': 'fa-heading', 'bullet': 'fa-circle', 'checkbox': 'fa-check-square' };
+    const iconClass = iconMap[item.type] || 'fa-circle';
 
     div.innerHTML = `
-      <div class="flex items-center gap-2">
+      <div class="item-actions">
         <button class="move-up" ${index === 0 ? 'disabled' : ''} title="Move up">
-          <i class="fas fa-chevron-up text-xs"></i>
+          <i class="fas fa-chevron-up"></i>
         </button>
         <button class="move-down" ${index === currentCardItems.length - 1 ? 'disabled' : ''} title="Move down">
-          <i class="fas fa-chevron-down text-xs"></i>
+          <i class="fas fa-chevron-down"></i>
         </button>
-        <i class="fas ${iconClass} text-gray-400"></i>
-        <input type="text" class="flex-1 item-content" value="${escapeHtml(item.content)}" placeholder="...">
+      </div>
+      <i class="fas ${iconClass} item-type-icon"></i>
+      <input type="text" class="item-content" value="${escapeHtml(item.content)}" placeholder="Type here...">
+      <div class="item-actions">
         <button class="delete" title="Delete">
-          <i class="fas fa-trash text-xs text-red-500"></i>
+          <i class="fas fa-trash" style="color:#dc2626;"></i>
         </button>
       </div>
     `;
 
-    // Event listeners
     const upBtn = div.querySelector('.move-up');
     const downBtn = div.querySelector('.move-down');
     const input = div.querySelector('.item-content');
@@ -887,6 +988,12 @@ function addItem(type) {
     checked: type === 'checkbox' ? false : undefined
   });
   renderCardItems();
+
+  // Focus the new input
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('#cardItems .item-content');
+    if (inputs.length > 0) inputs[inputs.length - 1].focus();
+  }, 50);
 }
 
 // Move item
@@ -914,7 +1021,7 @@ function saveCard() {
 
   card.title = title;
   card.items = currentCardItems;
-  delete card.content; // Remove old format
+  delete card.content;
 
   saveKanban();
   renderKanban();
@@ -926,4 +1033,5 @@ function closeModal() {
   document.getElementById('cardModal').classList.add('hidden');
   editingCard = null;
   currentCardItems = [];
+  currentCardTitle = '';
 }

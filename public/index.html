@@ -83,49 +83,229 @@
       border-bottom-left-radius: 4px;
     }
     
+    .vault-tree {
+      font-size: 13px;
+    }
+
     .vault-item {
       cursor: pointer;
-      transition: all 0.2s ease;
-      padding: 12px 16px;
-      border-radius: 8px;
+      transition: all 0.15s ease;
+      padding: 5px 10px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+      margin: 1px 0;
     }
-    
+
     .vault-item:hover {
-      background: rgba(212, 165, 116, 0.05);
+      background: rgba(212, 165, 116, 0.1);
+    }
+
+    .vault-item.active {
+      background: rgba(212, 165, 116, 0.18);
+      color: var(--accent-secondary);
+    }
+
+    .vault-item .item-icon {
+      width: 16px;
+      text-align: center;
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+
+    .vault-item .item-label {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .folder-children {
+      margin-left: 16px;
+    }
+
+    .chevron {
+      color: var(--text-secondary);
+      font-size: 9px;
+      transition: transform 0.2s ease;
+      width: 10px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .chevron.open {
+      transform: rotate(90deg);
     }
     
     .kanban-column {
       background: var(--bg-secondary);
       min-height: 500px;
     }
-    
+
+    .kanban-column .lane-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border-light);
+    }
+
+    .kanban-column .lane-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+    }
+
+    .kanban-column .lane-count {
+      font-size: 12px;
+      background: var(--border-light);
+      color: var(--text-secondary);
+      padding: 1px 8px;
+      border-radius: 10px;
+      margin-left: 8px;
+    }
+
     .kanban-card {
       background: white;
       border: 1px solid var(--border-light);
-      border-radius: 8px;
-      padding: 12px;
+      border-radius: 10px;
+      padding: 14px;
       margin-bottom: 8px;
       cursor: grab;
       transition: all 0.2s ease;
+      position: relative;
     }
-    
+
+    .kanban-card:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .kanban-card:hover .card-actions {
+      opacity: 1;
+    }
+
+    .card-actions {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 2px;
+      background: white;
+      border-radius: 6px;
+      padding: 2px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+
+    .card-actions button {
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+
+    .card-actions button:hover {
+      background: var(--bg-secondary);
+    }
+
+    .card-actions .delete-card-btn:hover {
+      color: #dc2626;
+    }
+
     .kanban-card:active {
       cursor: grabbing;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
-    
+
     .kanban-card.dragging {
       opacity: 0.5;
       transform: rotate(3deg);
     }
-    
+
+    .kanban-card .card-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 6px;
+      line-height: 1.3;
+      color: var(--text-primary);
+    }
+
+    .kanban-card .card-body {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+
+    .kanban-card .card-body .card-section {
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-primary);
+      margin-top: 8px;
+      margin-bottom: 4px;
+    }
+
+    .kanban-card .card-body .card-section:first-child {
+      margin-top: 0;
+    }
+
+    .kanban-card .card-body .card-bullet {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      padding: 1px 0;
+    }
+
+    .kanban-card .card-body .card-bullet::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent-light);
+      flex-shrink: 0;
+      margin-top: 6px;
+    }
+
+    .kanban-card .card-body .card-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 0;
+    }
+
+    .kanban-card .card-body .card-checkbox input[type="checkbox"] {
+      accent-color: var(--accent-primary);
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .kanban-card .card-body .card-checkbox.checked span {
+      text-decoration: line-through;
+      opacity: 0.5;
+    }
+
     .drop-zone {
-      border: 2px dashed var(--border-light);
+      border: 2px dashed transparent;
       border-radius: 8px;
       min-height: 100px;
       transition: all 0.2s ease;
     }
-    
+
     .drop-zone.active {
       border-color: var(--accent-primary);
       background: rgba(212, 165, 116, 0.05);
@@ -195,40 +375,145 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
+      background: rgba(0, 0, 0, 0.4);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 1000;
+      backdrop-filter: blur(4px);
     }
 
     .modal-content {
       background: white;
       border-radius: 16px;
-      padding: 24px;
-      max-width: 600px;
+      padding: 0;
+      max-width: 560px;
       width: 90%;
       max-height: 80vh;
+      overflow: hidden;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .modal-header h3 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .modal-body {
+      padding: 20px;
       overflow-y: auto;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      max-height: calc(80vh - 130px);
     }
 
-    .kanban-item {
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-light);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .modal-tabs {
+      display: flex;
+      gap: 0;
       background: var(--bg-secondary);
-      border: 1px solid var(--border-light);
       border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 8px;
-      cursor: move;
-      transition: all 0.2s ease;
+      padding: 3px;
     }
 
-    .kanban-item:hover {
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    .modal-tab {
+      padding: 5px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      transition: all 0.15s;
     }
 
-    .kanban-item.dragging-item {
+    .modal-tab.active {
+      background: white;
+      color: var(--text-primary);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    /* Card preview in modal */
+    .card-preview {
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .card-preview .preview-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: var(--text-primary);
+    }
+
+    .card-preview .preview-section {
+      font-weight: 600;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--accent-secondary);
+      margin-top: 14px;
+      margin-bottom: 6px;
+    }
+
+    .card-preview .preview-section:first-child {
+      margin-top: 0;
+    }
+
+    .card-preview .preview-bullet {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 3px 0;
+      color: var(--text-primary);
+    }
+
+    .card-preview .preview-bullet::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent-light);
+      flex-shrink: 0;
+      margin-top: 7px;
+    }
+
+    .card-preview .preview-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+    }
+
+    .card-preview .preview-checkbox input[type="checkbox"] {
+      accent-color: var(--accent-primary);
+      width: 16px;
+      height: 16px;
+    }
+
+    .card-preview .preview-checkbox.checked span {
+      text-decoration: line-through;
       opacity: 0.5;
+    }
+
+    .card-preview .preview-empty {
+      color: var(--text-secondary);
+      font-style: italic;
+      padding: 16px 0;
     }
 
     /* Chat file preview styles */
@@ -284,34 +569,56 @@
       color: var(--text-secondary);
     }
 
-    /* Card item styles */
+    /* Card item editor styles */
     .card-item {
       background: var(--bg-secondary);
       border-radius: 8px;
-      padding: 8px;
-      margin-bottom: 8px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    .card-item .flex-1 {
-      flex: 1;
-      min-width: 0;
+    .card-item .item-type-icon {
+      width: 20px;
+      text-align: center;
+      color: var(--accent-light);
+      flex-shrink: 0;
+      font-size: 11px;
     }
 
     .card-item input {
+      flex: 1;
+      min-width: 0;
       background: white;
       border: 1px solid var(--border-light);
-      padding: 6px 8px;
-      border-radius: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      transition: border-color 0.15s;
+    }
+
+    .card-item input:focus {
+      outline: none;
+      border-color: var(--accent-light);
+    }
+
+    .card-item .item-actions {
+      display: flex;
+      gap: 2px;
+      flex-shrink: 0;
     }
 
     .card-item button {
       padding: 4px 6px;
       border-radius: 4px;
-      opacity: 0.6;
-      transition: opacity 0.2s;
+      opacity: 0.4;
+      transition: opacity 0.15s;
       border: none;
       background: transparent;
       cursor: pointer;
+      font-size: 11px;
     }
 
     .card-item button:hover {
@@ -319,8 +626,31 @@
     }
 
     .card-item button:disabled {
-      opacity: 0.2;
+      opacity: 0.15;
       cursor: not-allowed;
+    }
+
+    .edit-add-buttons {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .edit-add-buttons button {
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px dashed var(--border-light);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .edit-add-buttons button:hover {
+      border-color: var(--accent-light);
+      color: var(--accent-primary);
+      background: rgba(212, 165, 116, 0.05);
     }
   </style>
 </head>
@@ -417,41 +747,49 @@
   <!-- Card Editor Modal -->
   <div id="cardModal" class="modal-overlay hidden">
     <div class="modal-content">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold">Edit Card</h3>
-        <button id="closeModal" class="text-gray-500 hover:text-gray-700">
+      <div class="modal-header">
+        <div class="flex items-center gap-3">
+          <h3 id="modalTitle">Card</h3>
+          <div class="modal-tabs">
+            <button class="modal-tab active" data-tab="preview" id="tabPreview">Preview</button>
+            <button class="modal-tab" data-tab="edit" id="tabEdit">Edit</button>
+          </div>
+        </div>
+        <button id="closeModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
           <i class="fas fa-times"></i>
         </button>
       </div>
-      
-      <div class="mb-4">
-        <label class="block text-sm font-medium mb-2">Card Title</label>
-        <input type="text" id="cardTitle" class="w-full px-3 py-2 rounded-lg border" 
-               style="border-color: var(--border-light);">
-      </div>
-      
-      <div class="mb-4">
-        <label class="block text-sm font-medium mb-2">Items</label>
-        <div id="cardItems" class="space-y-2 mb-2"></div>
-        
-        <div class="flex gap-2">
-          <button id="addSection" class="px-3 py-1 rounded text-sm" style="background: var(--bg-secondary);">
-            <i class="fas fa-heading mr-1"></i>Add Section
-          </button>
-          <button id="addBullet" class="px-3 py-1 rounded text-sm" style="background: var(--bg-secondary);">
-            <i class="fas fa-list mr-1"></i>Add Bullet
-          </button>
-          <button id="addCheckbox" class="px-3 py-1 rounded text-sm" style="background: var(--bg-secondary);">
-            <i class="fas fa-check-square mr-1"></i>Add Checkbox
-          </button>
+
+      <div class="modal-body">
+        <!-- Preview Tab -->
+        <div id="cardPreviewPane" class="card-preview"></div>
+
+        <!-- Edit Tab -->
+        <div id="cardEditPane" class="hidden">
+          <div class="mb-4">
+            <label class="block text-xs font-semibold mb-1" style="text-transform:uppercase;letter-spacing:0.04em;color:var(--text-secondary);">Title</label>
+            <input type="text" id="cardTitle" class="w-full px-3 py-2 rounded-lg border"
+                   style="border-color: var(--border-light); font-size: 14px;">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold mb-1" style="text-transform:uppercase;letter-spacing:0.04em;color:var(--text-secondary);">Items</label>
+            <div id="cardItems"></div>
+
+            <div class="edit-add-buttons">
+              <button id="addSection"><i class="fas fa-heading mr-1"></i>Section</button>
+              <button id="addBullet"><i class="fas fa-list mr-1"></i>Bullet</button>
+              <button id="addCheckbox"><i class="fas fa-check-square mr-1"></i>Checkbox</button>
+            </div>
+          </div>
         </div>
       </div>
-      
-      <div class="flex justify-end gap-2">
-        <button id="cancelCard" class="px-4 py-2 rounded-lg" style="background: var(--bg-secondary);">
+
+      <div class="modal-footer">
+        <button id="cancelCard" class="px-4 py-2 rounded-lg text-sm font-medium" style="background: var(--bg-secondary); border: none; cursor: pointer;">
           Cancel
         </button>
-        <button id="saveCard" class="px-4 py-2 rounded-lg text-white" style="background: var(--accent-primary);">
+        <button id="saveCard" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">
           Save
         </button>
       </div>
