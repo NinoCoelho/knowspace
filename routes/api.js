@@ -160,60 +160,107 @@ function walkDirectory(basePath, relativePath, files) {
 
 function parseKanbanMarkdown(content) {
   const lines = content.split('\n');
-  const kanban = {
-    title: 'Kanban',
-    lanes: []
-  };
-  
+  const kanban = { title: 'Kanban', lanes: [] };
+
   let currentLane = null;
-  
+  let currentCard = null;
+  let cardDepth = 0;
+
   lines.forEach(line => {
-    // Match ## Lane Title
+    const trimmed = line.trim();
+
+    // Lane header: ## Lane Title
     if (line.startsWith('## ')) {
+      if (currentCard && currentLane) currentLane.cards.push(currentCard);
       if (currentLane) kanban.lanes.push(currentLane);
+
       currentLane = {
         id: line.replace('## ', '').trim().toLowerCase().replace(/\s+/g, '-'),
         title: line.replace('## ', '').trim(),
         cards: []
       };
+      currentCard = null;
+      cardDepth = 0;
     }
-    // Match - [ ] or - [x] card
-    else if (line.match(/^- \[[ x]\]/)) {
-      if (currentLane) {
-        const isComplete = line.includes('[x]');
-        const content = line.replace(/^- \[[ x]\] /, '').trim();
-        currentLane.cards.push({
-          id: Date.now().toString() + Math.random(),
-          content,
-          complete: isComplete
-        });
-      }
+    // Card title (bullet at lane level): - Card Title
+    else if (trimmed.match(/^- /) && cardDepth === 0) {
+      if (currentCard && currentLane) currentLane.cards.push(currentCard);
+
+      currentCard = {
+        id: Date.now().toString() + Math.random(),
+        title: trimmed.replace(/^- /, ''),
+        items: []
+      };
+      cardDepth = 1;
+    }
+    // Section header: ### Section Title
+    else if (line.startsWith('### ') && currentCard) {
+      currentCard.items.push({
+        id: Date.now().toString() + Math.random(),
+        type: 'section',
+        content: line.replace('### ', '').trim()
+      });
+    }
+    // Checkbox: - [x] Item or - [ ] Item
+    else if (trimmed.match(/^- \[[ x]\]/) && currentCard) {
+      const isComplete = trimmed.includes('[x]');
+      const content = trimmed.replace(/^- \[[ x]\] /, '').trim();
+      currentCard.items.push({
+        id: Date.now().toString() + Math.random(),
+        type: 'checkbox',
+        content,
+        checked: isComplete
+      });
+    }
+    // Bullet item (indented): - Item
+    else if (trimmed.match(/^- /) && currentCard) {
+      currentCard.items.push({
+        id: Date.now().toString() + Math.random(),
+        type: 'bullet',
+        content: trimmed.replace(/^- /, '').trim()
+      });
     }
   });
-  
+
+  if (currentCard && currentLane) currentLane.cards.push(currentCard);
   if (currentLane) kanban.lanes.push(currentLane);
-  
+
   return kanban;
 }
 
 function serializeKanbanMarkdown(kanban) {
   let markdown = `---\nkanban-plugin: basic\n---\n\n# ${kanban.title}\n\n`;
-  
+
   kanban.lanes.forEach(lane => {
     markdown += `## ${lane.title}\n\n`;
+
     lane.cards.forEach(card => {
-      const checkbox = card.complete ? '[x]' : '[ ]';
-      markdown += `- ${checkbox} ${card.content}\n`;
+      // Card title
+      markdown += `- ${card.title}\n`;
+
+      // Card items
+      if (card.items && card.items.length > 0) {
+        card.items.forEach(item => {
+          if (item.type === 'section') {
+            markdown += `  ### ${item.content}\n`;
+          } else if (item.type === 'bullet') {
+            markdown += `  - ${item.content}\n`;
+          } else if (item.type === 'checkbox') {
+            const checkbox = item.checked ? '[x]' : '[ ]';
+            markdown += `  - ${checkbox} ${item.content}\n`;
+          }
+        });
+        markdown += '\n';
+      }
     });
-    markdown += '\n';
   });
-  
+
   return markdown;
 }
 
 function createDefaultKanban() {
   return {
-    title: 'Personal Kanban',
+    title: 'Kanban',
     lanes: [
       { id: 'todo', title: 'To Do', cards: [] },
       { id: 'in-progress', title: 'In Progress', cards: [] },
