@@ -5,18 +5,16 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const cookieParser = require('cookie-parser');
-const { exec } = require('child_process');
+const crypto = require('crypto');
 const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
+const { gatewayRpc } = require('./lib/gateway');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
 const authManager = new AuthManager();
-
-// Store active sessions per client
-const clientSessions = {};
 
 // Configure multer for temp chat file uploads
 const tempStorage = multer.diskStorage({
@@ -69,72 +67,70 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-// Chat history management - read from OpenClaw session
-function loadSessionHistory(clientSlug) {
-  try {
-    const sessionsDir = path.join(process.env.HOME || '/home/nino', '.openclaw', 'agents', clientSlug, 'sessions');
-    
-    if (!fs.existsSync(sessionsDir)) return [];
-    
-    // Find most recent .jsonl file
-    const files = fs.readdirSync(sessionsDir)
-      .filter(f => f.endsWith('.jsonl'))
-      .map(f => ({
-        name: f,
-        path: path.join(sessionsDir, f),
-        mtime: fs.statSync(path.join(sessionsDir, f)).mtime.getTime()
-      }))
-      .sort((a, b) => b.mtime - a.mtime);
-    
-    if (files.length === 0) return [];
-    
-    // Read most recent session file
-    const sessionPath = files[0].path;
-    const content = fs.readFileSync(sessionPath, 'utf8');
-    const lines = content.trim().split('\n');
-    const messages = [];
-    
-    lines.forEach(line => {
-      try {
-        const entry = JSON.parse(line);
-        if (entry.type === 'message' && entry.message && entry.message.content) {
-          const role = entry.message.role;
-          
-          // Extract text content (ignore thinking blocks)
-          let text = '';
-          if (Array.isArray(entry.message.content)) {
-            entry.message.content.forEach(block => {
-              if (block.type === 'text') {
-                text += block.text;
-              }
-            });
-          } else if (typeof entry.message.content === 'string') {
-            text = entry.message.content;
-          }
-          
-          if (text && (role === 'user' || role === 'assistant')) {
-            // Remove timestamp prefix from user messages
-            if (role === 'user') {
-              text = text.replace(/^\[[\w\s:-]+\]\s*/, '');
-            }
-            
-            messages.push({
-              role,
-              content: text,
-              timestamp: entry.timestamp
-            });
-          }
-        }
-      } catch (parseError) {
-        // Skip malformed lines
+// Gateway helpers for chat history and sessions
+
+function extractMessageText(message) {
+  if (!message || !message.content) return '';
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('');
+  }
+  return '';
+}
+
+function normalizeMessages(messages) {
+  return (messages || [])
+    .filter(m => (m.role === 'user' || m.role === 'assistant'))
+    .map(m => {
+      let text = extractMessageText(m);
+      // Remove timestamp prefix from user messages
+      if (m.role === 'user') {
+        text = text.replace(/^\[[\w\s:-]+\]\s*/, '');
       }
-    });
-    
-    // Keep last 50 messages
-    return messages.slice(-50);
+      return { role: m.role, content: text, timestamp: m.timestamp };
+    })
+    .filter(m => m.content);
+}
+
+async function loadGatewayHistory(sessionKey, limit = 50) {
+  try {
+    const result = await gatewayRpc('chat.history', { sessionKey, limit });
+    return normalizeMessages(result.messages);
   } catch (error) {
-    console.error('Error loading session history:', error);
+    console.error('Error loading gateway history:', error.message);
     return [];
+  }
+}
+
+async function listClientSessions(clientSlug, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await gatewayRpc('sessions.list', {
+        limit: 50,
+        includeLastMessage: true,
+        includeDerivedTitles: true,
+      });
+      const prefix = `agent:${clientSlug}:`;
+      return (result.sessions || [])
+        .filter(s => s.key && s.key.startsWith(prefix))
+        .map(s => ({
+          key: s.key,
+          label: s.label || s.derivedTitle || s.title || s.key.split(':').pop(),
+          updatedAt: s.updatedAt,
+          totalTokens: s.totalTokens,
+        }));
+    } catch (error) {
+      if (attempt < retries) {
+        console.log(`[gateway] Retrying sessions.list (attempt ${attempt + 2})...`);
+        await new Promise(r => setTimeout(r, 1000));
+      } else {
+        console.error('Error listing sessions:', error.message);
+        return [];
+      }
+    }
   }
 }
 
@@ -215,7 +211,7 @@ app.get('/api/client', (req, res) => {
 });
 
 // Chat history endpoint
-app.get('/api/chat/history', (req, res) => {
+app.get('/api/chat/history', async (req, res) => {
   const token = req.query.token || req.cookies.auth_token;
   const clientSlug = authManager.validateToken(token);
 
@@ -223,7 +219,8 @@ app.get('/api/chat/history', (req, res) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
 
-  const history = loadSessionHistory(clientSlug);
+  const sessionKey = req.query.sessionKey || `agent:${clientSlug}:main`;
+  const history = await loadGatewayHistory(sessionKey);
   res.json({ messages: history });
 });
 
@@ -346,91 +343,199 @@ io.use((socket, next) => {
   next();
 });
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   console.log(`Client connected: ${socket.clientSlug}`);
-  
-  // Send recent session history on connect
-  const history = loadSessionHistory(socket.clientSlug);
-  if (history.length > 0) {
-    socket.emit('chat:history', { messages: history });
+
+  // Default active session key — will be set when user picks a session
+  socket.activeSessionKey = null;
+
+  // Send session list and load the most recent session's history
+  try {
+    const sessions = await listClientSessions(socket.clientSlug);
+    socket.emit('sessions:list', { sessions });
+
+    if (sessions.length > 0) {
+      // Auto-select the most recent session
+      socket.activeSessionKey = sessions[0].key;
+      const history = await loadGatewayHistory(sessions[0].key);
+      socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
+    }
+  } catch (error) {
+    console.error('Error on connect:', error.message);
   }
-  
+
+  // --- Session management ---
+
+  socket.on('sessions:list', async () => {
+    try {
+      const sessions = await listClientSessions(socket.clientSlug);
+      socket.emit('sessions:list', { sessions });
+    } catch (error) {
+      console.error('sessions:list error:', error.message);
+    }
+  });
+
+  socket.on('sessions:switch', async (data) => {
+    try {
+      socket.activeSessionKey = data.sessionKey;
+      const history = await loadGatewayHistory(data.sessionKey);
+      socket.emit('chat:history', { messages: history, sessionKey: data.sessionKey });
+    } catch (error) {
+      console.error('sessions:switch error:', error.message);
+    }
+  });
+
+  socket.on('sessions:new', async () => {
+    try {
+      // Create a new session via gateway
+      const friendlyId = `agent:${socket.clientSlug}:web:direct:portal-${crypto.randomUUID()}`;
+      await gatewayRpc('sessions.patch', { key: friendlyId });
+      socket.activeSessionKey = friendlyId;
+
+      // Clear chat and refresh session list
+      socket.emit('chat:history', { messages: [], sessionKey: friendlyId });
+      const sessions = await listClientSessions(socket.clientSlug);
+      socket.emit('sessions:list', { sessions });
+    } catch (error) {
+      console.error('sessions:new error:', error.message);
+    }
+  });
+
+  socket.on('sessions:rename', async (data) => {
+    try {
+      await gatewayRpc('sessions.patch', { key: data.sessionKey, label: data.name });
+      const sessions = await listClientSessions(socket.clientSlug);
+      socket.emit('sessions:list', { sessions });
+    } catch (error) {
+      console.error('sessions:rename error:', error.message);
+    }
+  });
+
+  socket.on('sessions:delete', async (data) => {
+    try {
+      await gatewayRpc('sessions.delete', { key: data.sessionKey });
+
+      // If deleting the active session, switch to the next available
+      if (socket.activeSessionKey === data.sessionKey) {
+        const sessions = await listClientSessions(socket.clientSlug);
+        if (sessions.length > 0) {
+          socket.activeSessionKey = sessions[0].key;
+          const history = await loadGatewayHistory(sessions[0].key);
+          socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
+        } else {
+          socket.activeSessionKey = null;
+          socket.emit('chat:history', { messages: [], sessionKey: null });
+        }
+        socket.emit('sessions:list', { sessions });
+      } else {
+        const sessions = await listClientSessions(socket.clientSlug);
+        socket.emit('sessions:list', { sessions });
+      }
+    } catch (error) {
+      console.error('sessions:delete error:', error.message);
+    }
+  });
+
+  // --- Chat messaging via Gateway ---
+
   socket.on('chat:message', async (data) => {
     try {
       socket.emit('typing', { typing: true });
 
-      let sessionId = clientSessions[socket.clientSlug];
+      // Ensure we have an active session
+      if (!socket.activeSessionKey) {
+        socket.activeSessionKey = `agent:${socket.clientSlug}:web:direct:portal-${crypto.randomUUID()}`;
+        await gatewayRpc('sessions.patch', { key: socket.activeSessionKey });
+      }
 
       // Build message with temp file paths
       let messageText = data.message;
-
-      // If there are temp files, add them to the message
       if (data.tempFiles && data.tempFiles.length > 0) {
         const fileRefs = data.tempFiles.map(f => {
           return `Attached file: ${f.path} (${formatFileSize(f.size)})`;
         }).join('\n');
-
         messageText = `${messageText}\n\n${fileRefs}`;
-
-        // Schedule cleanup
-        data.tempFiles.forEach(f => {
+        data.tempFiles.forEach(() => {
           cleanupTempFiles(`${socket.clientSlug}-${data.messageId}`);
         });
       }
 
-      // Build command
-      // Escape shell metacharacters to prevent injection
-      const safeMessage = messageText.replace(/[\\"`$!]/g, '\\$&');
-      let cmd = `openclaw agent --agent ${socket.clientSlug} --message "${safeMessage}" --json`;
-      if (sessionId) {
-        cmd += ` --session-id ${sessionId}`;
+      const sessionKey = socket.activeSessionKey;
+      console.log(`[chat] ${socket.clientSlug}: sending to ${sessionKey}`);
+
+      // Get message count before sending so we can detect the new reply
+      const historyBefore = await loadGatewayHistory(sessionKey, 50);
+      const msgCountBefore = historyBefore.length;
+
+      // Send via the singleton gateway client
+      await gatewayRpc('chat.send', {
+        sessionKey,
+        message: messageText,
+        deliver: true,
+        timeoutMs: 120000,
+        idempotencyKey: crypto.randomUUID(),
+      });
+
+      // Poll for the assistant response (chat.send is async)
+      const POLL_INTERVAL = 2000;
+      const MAX_POLLS = 45; // 90s max
+      let found = false;
+
+      for (let i = 0; i < MAX_POLLS; i++) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL));
+
+        const history = await loadGatewayHistory(sessionKey, 50);
+        if (history.length > msgCountBefore) {
+          // New messages appeared — find the latest assistant reply
+          const newMessages = history.slice(msgCountBefore);
+          const assistantReply = newMessages.filter(m => m.role === 'assistant').pop();
+          if (assistantReply) {
+            socket.emit('typing', { typing: false });
+            socket.emit('chat:message', {
+              role: 'assistant',
+              content: assistantReply.content,
+              timestamp: assistantReply.timestamp || new Date().toISOString(),
+            });
+            found = true;
+            break;
+          }
+          // Check if there's an error message in the new content
+          const errorMsg = newMessages.find(m =>
+            m.role === 'assistant' && (m.content.includes('rate limit') || m.content.includes('error'))
+          );
+          if (errorMsg) {
+            socket.emit('typing', { typing: false });
+            socket.emit('chat:message', {
+              role: 'assistant',
+              content: errorMsg.content,
+              timestamp: new Date().toISOString(),
+            });
+            found = true;
+            break;
+          }
+        }
       }
 
-      exec(cmd, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (!found) {
         socket.emit('typing', { typing: false });
+        socket.emit('chat:message', {
+          role: 'assistant',
+          content: 'The agent is taking too long to respond. Please try again.',
+          timestamp: new Date().toISOString(),
+        });
+      }
 
-        if (error) {
-          console.error('Agent error:', error);
-          socket.emit('chat:message', {
-            role: 'assistant',
-            content: 'Sorry, I encountered an error. Please try again.',
-            timestamp: new Date().toISOString()
-          });
-          return;
-        }
+      // Refresh session list (title may have been derived from first message)
+      const sessions = await listClientSessions(socket.clientSlug);
+      socket.emit('sessions:list', { sessions });
 
-        try {
-          const result = JSON.parse(stdout);
-          let reply = 'No response';
-          if (result.result && result.result.payloads && result.result.payloads.length > 0) {
-            reply = result.result.payloads[0].text || 'No response';
-          }
-
-          if (result.result && result.result.meta && result.result.meta.agentMeta) {
-            clientSessions[socket.clientSlug] = result.result.meta.agentMeta.sessionId;
-          }
-
-          socket.emit('chat:message', {
-            role: 'assistant',
-            content: reply,
-            timestamp: new Date().toISOString()
-          });
-        } catch (parseError) {
-          console.error('Parse error:', parseError);
-          socket.emit('chat:message', {
-            role: 'assistant',
-            content: stdout || 'Sorry, I could not process the response.',
-            timestamp: new Date().toISOString()
-          });
-        }
-      });
     } catch (error) {
-      console.error('Chat error:', error);
+      console.error(`[chat] ${socket.clientSlug}: ${error.message}`);
       socket.emit('typing', { typing: false });
       socket.emit('chat:message', {
         role: 'assistant',
-        content: 'Sorry, something went wrong. Please try again.',
-        timestamp: new Date().toISOString()
+        content: `Something went wrong: ${error.message}`,
+        timestamp: new Date().toISOString(),
       });
     }
   });

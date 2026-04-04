@@ -35,6 +35,69 @@
     .sidebar {
       background: var(--bg-secondary);
       border-right: 1px solid var(--border-light);
+      position: relative;
+      transition: width 0.2s ease;
+      min-width: 48px;
+    }
+    .sidebar.collapsed {
+      width: 48px !important;
+    }
+    .sidebar.collapsed .sidebar-content { display: none; }
+    .sidebar.collapsed .sidebar-collapsed-icons { display: flex; }
+    .sidebar-collapsed-icons {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding-top: 16px;
+    }
+    .sidebar-collapsed-icons button {
+      width: 32px; height: 32px;
+      border: none; background: none;
+      color: var(--text-secondary);
+      cursor: pointer; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; transition: all 0.15s;
+    }
+    .sidebar-collapsed-icons button:hover,
+    .sidebar-collapsed-icons button.active {
+      background: rgba(212,165,116,0.15);
+      color: var(--accent-light);
+    }
+
+    .sidebar-resize {
+      position: absolute;
+      top: 0; right: -3px;
+      width: 6px; height: 100%;
+      cursor: col-resize;
+      z-index: 10;
+    }
+    .sidebar-resize:hover,
+    .sidebar-resize.dragging {
+      background: var(--accent-light);
+      opacity: 0.4;
+      border-radius: 3px;
+    }
+
+    .sidebar-toggle {
+      position: absolute;
+      top: 12px; right: -14px;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 1px solid var(--border-light);
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px;
+      z-index: 11;
+      transition: all 0.15s;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .sidebar-toggle:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
     }
     
     .nav-item {
@@ -67,22 +130,199 @@
       padding: 12px 16px;
       border-radius: 18px;
       line-height: 1.5;
+      position: relative;
     }
-    
+
     .message.user {
       background: var(--accent-primary);
       color: white;
       margin-left: auto;
       border-bottom-right-radius: 4px;
     }
-    
+
     .message.assistant {
       background: var(--bg-secondary);
       color: var(--text-primary);
       margin-right: auto;
       border-bottom-left-radius: 4px;
     }
+
+    .message .msg-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: none;
+      gap: 3px;
+    }
+    .message:hover .msg-actions {
+      display: flex;
+    }
+    .message .msg-action-btn {
+      border: none;
+      background: rgba(0,0,0,0.06);
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 4px 7px;
+      border-radius: 6px;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+    .message .msg-action-btn:hover {
+      background: rgba(0,0,0,0.12);
+      color: var(--text-primary);
+    }
+    .message .msg-action-btn.done {
+      color: #059669;
+    }
+    .message.user .msg-action-btn {
+      background: rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.8);
+    }
+    .message.user .msg-action-btn:hover {
+      background: rgba(255,255,255,0.3);
+      color: white;
+    }
+
+    /* Vault link in chat */
+    .vault-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      background: rgba(139,94,60,0.08);
+      border: 1px solid rgba(139,94,60,0.2);
+      border-radius: 6px;
+      color: var(--accent-primary);
+      cursor: pointer;
+      font-size: 13px;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .vault-link:hover {
+      background: rgba(139,94,60,0.15);
+      border-color: var(--accent-primary);
+    }
+
+    /* Vault preview modal */
+    .vault-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(2px);
+    }
+    .vault-modal {
+      background: var(--bg-chat);
+      border-radius: 16px;
+      width: 92vw;
+      height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+    .vault-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-light);
+      flex-shrink: 0;
+    }
+    .vault-modal-header h3 {
+      font-weight: 600;
+      font-size: 15px;
+      margin: 0;
+    }
+    .vault-modal-header .modal-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .vault-modal-header .modal-btn {
+      border: 1px solid var(--border-light);
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .vault-modal-header .modal-btn:hover {
+      border-color: var(--accent-light);
+      color: var(--accent-primary);
+    }
+    .vault-modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    /* Typing indicator progress */
+    .typing-elapsed {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-left: 4px;
+    }
     
+    /* Session sidebar */
+    .session-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      margin-bottom: 2px;
+      position: relative;
+    }
+    .session-item:hover {
+      background: rgba(212, 165, 116, 0.1);
+    }
+    .session-item.active {
+      background: rgba(212, 165, 116, 0.18);
+    }
+    .session-item .session-name {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text-primary);
+    }
+    .session-item .session-date {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .session-item .session-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: none;
+      gap: 4px;
+    }
+    .session-item:hover .session-actions {
+      display: flex;
+    }
+    .session-action-btn {
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 12px;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .session-action-btn:hover {
+      background: rgba(212, 165, 116, 0.2);
+      color: var(--accent-primary);
+    }
+
     .vault-tree {
       font-size: 13px;
     }
@@ -655,31 +895,88 @@
   </style>
 </head>
 <body class="h-screen flex">
-  <!-- Sidebar -->
-  <aside class="sidebar w-64 flex flex-col">
-    <div class="p-6">
-      <h1 class="text-xl font-semibold mb-2">Portal</h1>
-      <p class="text-sm text-gray-500" id="clientName">Loading...</p>
+  <!-- Unified Sidebar -->
+  <aside id="sidebar" class="sidebar flex flex-col" style="width:256px;">
+    <!-- Resize handle -->
+    <div id="sidebarResize" class="sidebar-resize"></div>
+    <!-- Collapse toggle -->
+    <button id="sidebarToggle" class="sidebar-toggle"><i class="fas fa-chevron-left"></i></button>
+
+    <!-- Collapsed mini-icons -->
+    <div class="sidebar-collapsed-icons">
+      <button data-view="chat" title="Chat"><i class="fas fa-comment"></i></button>
+      <button data-view="vault" title="Vault"><i class="fas fa-folder"></i></button>
+      <button data-view="kanban" title="Kanban"><i class="fas fa-columns"></i></button>
     </div>
-    
-    <nav class="flex-1 px-3">
-      <a href="#" class="nav-item flex items-center px-4 py-3 rounded-lg mb-1 active" data-view="chat">
-        <i class="fas fa-comment w-5"></i>
-        <span class="ml-3">Chat</span>
+
+    <!-- Full sidebar content -->
+    <div class="sidebar-content flex flex-col flex-1 min-h-0">
+      <div class="p-6 pb-3">
+        <h1 class="text-xl font-semibold mb-1">Portal</h1>
+        <p class="text-sm text-gray-500" id="clientName">Loading...</p>
+      </div>
+
+      <!-- Nav tabs -->
+      <nav class="px-3 flex-shrink-0 flex gap-1">
+      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium active" data-view="chat">
+        <i class="fas fa-comment mr-1.5"></i>Chat
       </a>
-      <a href="#" class="nav-item flex items-center px-4 py-3 rounded-lg mb-1" data-view="vault">
-        <i class="fas fa-folder w-5"></i>
-        <span class="ml-3">Vault</span>
+      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="vault">
+        <i class="fas fa-folder mr-1.5"></i>Vault
       </a>
-      <a href="#" class="nav-item flex items-center px-4 py-3 rounded-lg mb-1" data-view="kanban">
-        <i class="fas fa-columns w-5"></i>
-        <span class="ml-3">Kanban</span>
+      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="kanban">
+        <i class="fas fa-columns mr-1.5"></i>Kanban
       </a>
     </nav>
-    
-    <div class="p-4 border-t border-gray-200">
-      <p class="text-xs text-gray-400">Powered by OpenClaw</p>
+
+    <!-- Divider -->
+    <div class="mx-4 my-2 border-t" style="border-color: var(--border-light);"></div>
+
+    <!-- Dynamic sidebar panels -->
+
+    <!-- Chat panel -->
+    <div id="sidebarChat" class="flex-1 flex flex-col min-h-0">
+      <div class="px-4 py-1 flex items-center justify-between flex-shrink-0">
+        <span class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-secondary);">Conversations</span>
+        <button id="newSessionBtn" class="px-2 py-1 rounded-md text-xs font-medium text-white transition-all hover:opacity-90"
+                style="background: var(--accent-primary);">
+          <i class="fas fa-plus mr-1"></i>New
+        </button>
+      </div>
+      <div id="sessionList" class="flex-1 overflow-y-auto px-3 pb-2 min-h-0"></div>
     </div>
+
+    <!-- Vault panel -->
+    <div id="sidebarVault" class="flex-1 flex flex-col min-h-0 hidden">
+      <div class="px-3 pb-2 flex-shrink-0">
+        <input type="text" id="vaultSearch"
+               class="w-full px-3 py-2 rounded-lg border-0 text-sm"
+               style="background: var(--bg-primary);"
+               placeholder="Search files...">
+        <button id="uploadBtn" class="mt-2 w-full px-3 py-1.5 rounded-lg text-white font-medium text-xs"
+                style="background: var(--accent-primary);">
+          <i class="fas fa-upload mr-1"></i>Upload
+        </button>
+      </div>
+      <div id="vaultTree" class="flex-1 overflow-y-auto px-2 pb-2 min-h-0"></div>
+    </div>
+
+    <!-- Kanban panel -->
+    <div id="sidebarKanban" class="flex-1 flex flex-col min-h-0 hidden">
+      <div class="px-4 py-1 flex items-center justify-between flex-shrink-0">
+        <span class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-secondary);">Boards</span>
+        <button id="newKanbanBtn" class="px-2 py-1 rounded-md text-xs font-medium text-white transition-all hover:opacity-90"
+                style="background: var(--accent-primary);">
+          <i class="fas fa-plus mr-1"></i>New
+        </button>
+      </div>
+      <div id="kanbanList" class="flex-1 overflow-y-auto px-3 pb-2 min-h-0"></div>
+    </div>
+
+      <div class="p-4 border-t flex-shrink-0" style="border-color: var(--border-light);">
+        <p class="text-xs" style="color: var(--text-secondary);">Powered by OpenClaw</p>
+      </div>
+    </div><!-- /sidebar-content -->
   </aside>
 
   <!-- Main Content -->
@@ -713,28 +1010,12 @@
     </div>
 
     <!-- Vault View -->
-    <div id="vaultView" class="flex-1 hidden m-6">
-      <div class="flex h-full rounded-2xl overflow-hidden" style="background: var(--bg-chat);">
-        <div class="w-1/3 border-r overflow-y-auto" style="border-color: var(--border-light);">
-          <div class="p-4 border-b" style="border-color: var(--border-light);">
-            <input type="text" id="vaultSearch" 
-                   class="w-full px-4 py-2 rounded-lg border-0"
-                   style="background: var(--bg-secondary);"
-                   placeholder="Search vault...">
-            <button id="uploadBtn" class="mt-2 w-full px-4 py-2 rounded-lg text-white font-medium"
-                    style="background: var(--accent-primary);">
-              <i class="fas fa-upload mr-2"></i>Upload File
-            </button>
-          </div>
-          <div id="vaultTree" class="p-2"></div>
+    <div id="vaultView" class="flex-1 hidden m-6 min-h-0">
+      <div class="h-full rounded-2xl overflow-hidden flex flex-col" style="background: var(--bg-chat);">
+        <div class="p-4 border-b flex-shrink-0 flex items-center justify-between" style="border-color: var(--border-light);">
+          <h2 id="vaultFileName" class="font-semibold">Select a file</h2>
         </div>
-        
-        <div class="flex-1 flex flex-col">
-          <div class="p-4 border-b" style="border-color: var(--border-light);">
-            <h2 id="vaultFileName" class="font-semibold">Select a file</h2>
-          </div>
-          <div id="vaultContent" class="flex-1 overflow-y-auto p-6"></div>
-        </div>
+        <div id="vaultContent" class="flex-1 overflow-y-auto p-6 min-h-0"></div>
       </div>
     </div>
 

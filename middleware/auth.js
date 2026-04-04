@@ -7,6 +7,23 @@ const TOKENS_FILE = path.join(__dirname, '..', '.tokens.json');
 class AuthManager {
   constructor() {
     this.tokens = this.loadTokens();
+    this._lastMtime = this._getFileMtime();
+  }
+
+  _getFileMtime() {
+    try {
+      return fs.statSync(TOKENS_FILE).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  _reloadIfChanged() {
+    const mtime = this._getFileMtime();
+    if (mtime > this._lastMtime) {
+      this.tokens = this.loadTokens();
+      this._lastMtime = mtime;
+    }
   }
 
   loadTokens() {
@@ -51,6 +68,7 @@ class AuthManager {
   }
 
   validateToken(providedToken) {
+    this._reloadIfChanged();
     const hashedProvided = crypto.createHash('sha256').update(providedToken).digest('hex');
     
     for (const [clientSlug, clientData] of Object.entries(this.tokens)) {
