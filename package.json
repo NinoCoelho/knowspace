@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Client portal with chat, vault viewer, and kanban",
   "main": "server.js",
+  "bin": {
+    "knowspace": "./bin/knowspace.js"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"

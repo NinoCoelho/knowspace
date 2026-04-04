@@ -1,0 +1,56 @@
+{
+  "brand": {
+    "name": "Your Brand Name",
+    "handle": "@yourhandle",
+    "portrait_url": "https://example.com/your-portrait.jpg"
+  },
+  "hashtags": {
+    "popular": ["#business", "#entrepreneur", "#success", "#growth", "#leadership", "#ceo"],
+    "niche": ["#yourindustry", "#yourniche", "#specifictopic"],
+    "brand": ["#yourbrand", "#yourname"],
+    "location": ["#yourcity", "#yourcountry"]
+  },
+  "ctas": {
+    "default": "DM for more information",
+    "custom": {
+      "demo": "DM 'DEMO' for a free consultation",
+      "info": "DM 'INFO' to learn more",
+      "start": "DM 'START' to begin"
+    }
+  },
+  "hooks": {
+    "topic_one": {
+      "hook": "Your attention-grabbing hook for topic one",
+      "framework": "pas",
+      "problem": "Describe the problem in detail.",
+      "agitation": "Amplify with data and consequences.",
+      "solution": "Present your solution clearly.",
+      "cta": "DM 'ACTION' for next steps"
+    },
+    "topic_two": {
+      "hook": "Hook for topic two - maybe a story",
+      "framework": "story",
+      "story": "Tell the story of transformation.",
+      "result": "Show the results achieved.",
+      "cta": "DM 'STORY' to hear more"
+    },
+    "topic_three": {
+      "hook": "Surprising insight about your industry",
+      "framework": "insight",
+      "insight": "Share the data or observation.",
+      "value": "Explain why it matters.",
+      "cta": "DM 'INSIGHT' for details"
+    }
+  },
+  "integrations": {
+    "buffer": {
+      "enabled": true,
+      "instagram_channel_id": "env:BUFFER_PROFILE_ID_INSTAGRAM",
+      "linkedin_channel_id": "env:BUFFER_PROFILE_ID_LINKEDIN"
+    },
+    "ghostwriter": {
+      "enabled": false,
+      "path": null
+    }
+  }
+}

@@ -1,0 +1,4 @@
+node_modules/
+.tokens.json
+.device-keys.json
+skills/**/__pycache__
