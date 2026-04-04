@@ -111,20 +111,45 @@ router.get('/vault/search', (req, res) => {
   }
 });
 
+// List kanban boards
+router.get('/kanban/list', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const kanbanDir = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban');
+
+  try {
+    if (!fs.existsSync(kanbanDir)) {
+      return res.json({ boards: [{ file: 'kanban.md', title: 'Kanban' }] });
+    }
+    const files = fs.readdirSync(kanbanDir)
+      .filter(f => f.endsWith('.md'))
+      .map(f => {
+        const content = fs.readFileSync(path.join(kanbanDir, f), 'utf8');
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        return { file: f, title: titleMatch ? titleMatch[1] : f.replace('.md', '') };
+      });
+    if (files.length === 0) files.push({ file: 'kanban.md', title: 'Kanban' });
+    res.json({ boards: files });
+  } catch (error) {
+    console.error('Error listing kanbans:', error);
+    res.json({ boards: [{ file: 'kanban.md', title: 'Kanban' }] });
+  }
+});
+
 // Get kanban
 router.get('/kanban', (req, res) => {
   const clientSlug = req.clientSlug;
-  const kanbanPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban', 'kanban.md');
-  
+  const file = req.query.file || 'kanban.md';
+  const safe = path.basename(file);
+  const kanbanPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban', safe);
+
   try {
     if (fs.existsSync(kanbanPath)) {
       const content = fs.readFileSync(kanbanPath, 'utf8');
       const kanban = parseKanbanMarkdown(content);
-      res.json({ kanban });
+      res.json({ kanban, file: safe });
     } else {
-      // Return default kanban
       const defaultKanban = createDefaultKanban();
-      res.json({ kanban: defaultKanban });
+      res.json({ kanban: defaultKanban, file: safe });
     }
   } catch (error) {
     console.error('Error reading kanban:', error);
@@ -136,16 +161,36 @@ router.get('/kanban', (req, res) => {
 router.post('/kanban', (req, res) => {
   const clientSlug = req.clientSlug;
   const { kanban } = req.body;
-  
-  const kanbanPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban', 'kanban.md');
-  
+  const file = req.query.file || 'kanban.md';
+  const safe = path.basename(file);
+  const kanbanDir = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban');
+  const kanbanPath = path.join(kanbanDir, safe);
+
   try {
+    if (!fs.existsSync(kanbanDir)) fs.mkdirSync(kanbanDir, { recursive: true });
     const markdown = serializeKanbanMarkdown(kanban);
     fs.writeFileSync(kanbanPath, markdown, 'utf8');
     res.json({ success: true });
   } catch (error) {
     console.error('Error saving kanban:', error);
     res.status(500).json({ error: 'Failed to save kanban' });
+  }
+});
+
+// Delete kanban
+router.delete('/kanban', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const file = req.query.file || '';
+  const safe = path.basename(file);
+  if (!safe) return res.status(400).json({ error: 'file required' });
+  const kanbanPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban', safe);
+
+  try {
+    if (fs.existsSync(kanbanPath)) fs.unlinkSync(kanbanPath);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting kanban:', error);
+    res.status(500).json({ error: 'Failed to delete kanban' });
   }
 });
 
