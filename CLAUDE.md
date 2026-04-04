@@ -4,15 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+### Knowspace CLI
+```bash
+# Start the server
+knowspace serve [--port 3445]
+
+# Onboard a client (install skills, generate templates & token)
+knowspace onboard <slug>
+knowspace onboard <slug> --output ~/slug/workspace
+knowspace onboard <slug> --skills-target /path/to/openclaw/skills
+
+# Token management
+knowspace tokens list
+knowspace tokens generate <slug>
+knowspace tokens rotate <slug>
+```
+
 ### Development
 ```bash
-# Start the server (production and development use same command)
+# Start the server (alternative to knowspace serve)
 npm start
 # or
 npm dev
 ```
 
-### Token Management
+### Token Management (legacy)
 ```bash
 # Generate a new token for a client
 node scripts/generate-token.js <client-slug>
