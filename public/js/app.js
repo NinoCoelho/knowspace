@@ -1,9 +1,25 @@
-// Get token from URL
+// Get token from URL or cookie
 const urlParams = new URLSearchParams(window.location.search);
-const token = urlParams.get('token');
+const urlToken = urlParams.get('token');
+
+// If token in URL, redirect to auth endpoint to set cookie
+if (urlToken) {
+  window.location.href = `/auth?token=${urlToken}`;
+  throw new Error('Redirecting to set authentication cookie');
+}
+
+// Get token from cookie
+function getCookie(name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+}
+
+const token = getCookie('auth_token');
 
 if (!token) {
-  document.body.innerHTML = '<div class="flex items-center justify-center h-screen"><div class="text-center"><h1 class="text-2xl font-bold text-red-600">Token Required</h1><p class="text-gray-600 mt-2">Please provide a valid token in the URL.</p></div></div>';
+  document.body.innerHTML = '<div class="flex items-center justify-center h-screen"><div class="text-center"><h1 class="text-2xl font-bold text-red-600">Authentication Required</h1><p class="text-gray-600 mt-2">Please provide a valid token.</p></div></div>';
   throw new Error('No token');
 }
 
@@ -17,6 +33,7 @@ let currentView = 'chat';
 let vaultFiles = [];
 let currentKanban = null;
 let clientSlug = null;
+let pendingFiles = [];
 
 // DOM Elements
 const messagesDiv = document.getElementById('messages');
@@ -132,17 +149,35 @@ function showTypingIndicator(show) {
 function addMessage(content, role) {
   // Remove typing indicator if present
   showTypingIndicator(false);
-  
+
   const msgDiv = document.createElement('div');
   msgDiv.className = `message ${role}`;
-  
-  // Render markdown for assistant messages
+
+  const text = typeof content === 'string' ? content : (content.text || '');
+  const files = (typeof content === 'object' ? content.files : []) || [];
+
+  let html = '';
   if (role === 'assistant' && typeof marked !== 'undefined') {
-    msgDiv.innerHTML = marked.parse(content);
+    html = marked.parse(text);
   } else {
-    msgDiv.textContent = content;
+    html = escapeHtml(text);
   }
-  
+
+  // Add file info for user messages
+  if (files.length > 0) {
+    const filesHtml = files.map(f => {
+      const sizeStr = formatFileSize(f.size);
+      return `<div class="flex items-center gap-2 mt-2 p-2 bg-gray-100 rounded">
+        <i class="fas fa-file text-gray-500"></i>
+        <span class="text-sm">${escapeHtml(f.name)}</span>
+        <span class="text-xs text-gray-400">(${sizeStr})</span>
+      </div>`;
+    }).join('');
+
+    html += `<div class="mt-2">${filesHtml}</div>`;
+  }
+
+  msgDiv.innerHTML = html;
   messagesDiv.appendChild(msgDiv);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
@@ -155,13 +190,114 @@ messageInput.addEventListener('keypress', (e) => {
   }
 });
 
+// Chat file upload handler
+document.getElementById('chatUploadBtn').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+
+  input.onchange = async (e) => {
+    const files = Array.from(e.target.files);
+    for (const file of files) {
+      await uploadTempFile(file);
+    }
+  };
+  input.click();
+});
+
+// Upload file to temp directory
+async function uploadTempFile(file) {
+  const formData = new FormData();
+  formData.append('files', file);
+
+  try {
+    const res = await fetch(`/api/chat/upload?token=${token}`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      // Add files with their server-side paths
+      data.files.forEach(f => {
+        pendingFiles.push({
+          path: f.path,
+          name: f.name,
+          type: f.type,
+          size: f.size
+        });
+      });
+      renderFilePreview();
+    }
+  } catch (error) {
+    console.error('Upload failed:', error);
+    alert('Failed to upload file');
+  }
+}
+
+// Render file preview
+function renderFilePreview() {
+  const preview = document.getElementById('chatFilePreview');
+  preview.innerHTML = '';
+
+  if (pendingFiles.length === 0) {
+    preview.classList.add('hidden');
+    return;
+  }
+
+  preview.classList.remove('hidden');
+  pendingFiles.forEach((file, index) => {
+    const div = document.createElement('div');
+    div.className = 'file-preview';
+    div.title = file.name;
+
+    if (file.type && file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file.blob || new Blob([]));
+      img.onload = () => URL.revokeObjectURL(img.src);
+      div.appendChild(img);
+    } else {
+      div.innerHTML = `<i class="fas fa-file file-icon"></i>`;
+    }
+
+    const removeBtn = document.createElement('div');
+    removeBtn.className = 'remove-btn';
+    removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    removeBtn.onclick = () => {
+      pendingFiles.splice(index, 1);
+      renderFilePreview();
+    };
+
+    div.appendChild(removeBtn);
+    preview.appendChild(div);
+  });
+}
+
 function sendMessage() {
   const message = messageInput.value.trim();
-  if (!message) return;
-  
-  addMessage(message, 'user');
-  socket.emit('chat:message', { message });
+  if (!message && pendingFiles.length === 0) return;
+
+  // Generate message ID for tracking
+  const messageId = Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+
+  // Display user message with file info
+  const messageData = {
+    text: message,
+    files: pendingFiles.map(f => ({ name: f.name, size: f.size }))
+  };
+  addMessage(messageData, 'user');
+
+  // Send to agent with temp file paths
+  socket.emit('chat:message', {
+    message: message,
+    messageId: messageId,
+    tempFiles: pendingFiles
+  });
+
+  // Clear inputs
   messageInput.value = '';
+  pendingFiles = [];
+  renderFilePreview();
 }
 
 // Client info
@@ -391,10 +527,10 @@ async function loadKanban() {
 
 function getDefaultKanban() {
   return {
-    title: 'Personal Kanban',
+    title: 'Kanban',
     lanes: [
       { id: 'todo', title: 'To Do', cards: [] },
-      { id: 'progress', title: 'In Progress', cards: [] },
+      { id: 'in-progress', title: 'In Progress', cards: [] },
       { id: 'done', title: 'Done', cards: [] }
     ]
   };
@@ -402,12 +538,12 @@ function getDefaultKanban() {
 
 function renderKanban() {
   kanbanBoard.innerHTML = '';
-  
+
   currentKanban.lanes.forEach(lane => {
     const column = document.createElement('div');
     column.className = 'kanban-column flex-1 min-w-64 rounded-lg p-4';
     column.dataset.laneId = lane.id;
-    
+
     column.innerHTML = `
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-semibold">${lane.title}</h3>
@@ -416,10 +552,31 @@ function renderKanban() {
         </button>
       </div>
       <div class="cards-container space-y-2 min-h-96 drop-zone" data-lane-id="${lane.id}">
-        ${lane.cards.map((card, index) => `
+        ${lane.cards.map((card, index) => {
+          const migrated = migrateCard(card);
+          let contentHtml = '';
+          if (migrated.title) {
+            contentHtml += `<div class="font-semibold mb-2">${escapeHtml(migrated.title)}</div>`;
+          }
+          if (migrated.items && migrated.items.length > 0) {
+            contentHtml += '<div class="space-y-1">';
+            migrated.items.forEach(item => {
+              if (item.type === 'section') {
+                contentHtml += `<div class="font-medium text-sm">${escapeHtml(item.content)}</div>`;
+              } else if (item.type === 'bullet') {
+                contentHtml += `<div class="text-sm">• ${escapeHtml(item.content)}</div>`;
+              } else if (item.type === 'checkbox') {
+                const checked = item.checked ? 'x' : ' ';
+                contentHtml += `<div class="text-sm">- [${checked}] ${escapeHtml(item.content)}</div>`;
+              }
+            });
+            contentHtml += '</div>';
+          }
+
+          return `
           <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}">
             <div class="flex items-start justify-between">
-              <div class="text-sm flex-1 prose">${typeof marked !== 'undefined' ? marked.parse(card.content) : card.content}</div>
+              <div class="text-sm prose">${contentHtml}</div>
               <div class="flex gap-2 ml-2">
                 <button class="edit-card-btn text-gray-400 hover:text-blue-600" data-card-id="${card.id}">
                   <i class="fas fa-edit text-xs"></i>
@@ -429,30 +586,30 @@ function renderKanban() {
                 </button>
               </div>
             </div>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
       </div>
     `;
-    
+
     kanbanBoard.appendChild(column);
-    
+
     // Add card button
     column.querySelector('.add-card-btn').addEventListener('click', () => {
-      const content = prompt('Enter card content (markdown supported):');
-      if (content) {
-        addCard(lane.id, content);
+      const title = prompt('Enter card title:');
+      if (title) {
+        addCard(lane.id, title);
       }
     });
-    
+
     // Edit/delete buttons
     column.querySelectorAll('.edit-card-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const cardId = btn.dataset.cardId;
-        editCard(lane.id, cardId);
+        openCardModal(lane.id, cardId);
       });
     });
-    
+
     column.querySelectorAll('.delete-card-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -460,32 +617,32 @@ function renderKanban() {
         deleteCard(lane.id, cardId);
       });
     });
-    
+
     // Drag and drop
     const cardsContainer = column.querySelector('.cards-container');
-    
+
     cardsContainer.addEventListener('dragover', (e) => {
       e.preventDefault();
       cardsContainer.classList.add('active');
     });
-    
+
     cardsContainer.addEventListener('dragleave', () => {
       cardsContainer.classList.remove('active');
     });
-    
+
     cardsContainer.addEventListener('drop', (e) => {
       e.preventDefault();
       cardsContainer.classList.remove('active');
-      
+
       const cardIndex = e.dataTransfer.getData('cardIndex');
       const sourceLaneId = e.dataTransfer.getData('sourceLaneId');
-      
+
       if (cardIndex && sourceLaneId) {
         moveCard(sourceLaneId, lane.id, parseInt(cardIndex));
       }
     });
   });
-  
+
   // Make cards draggable
   document.querySelectorAll('.kanban-card').forEach(card => {
     card.addEventListener('dragstart', (e) => {
@@ -493,43 +650,28 @@ function renderKanban() {
       e.dataTransfer.setData('sourceLaneId', card.closest('.cards-container').dataset.laneId);
       card.classList.add('dragging');
     });
-    
+
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging');
     });
   });
-  
+
   // Add lane button
   const addLaneBtn = document.createElement('button');
   addLaneBtn.className = 'px-6 py-3 rounded-lg font-medium min-w-64';
   addLaneBtn.style.background = 'var(--bg-secondary)';
-  addLaneBtn.style.color = 'var(--accent-primary)';
+  addLaneBtn.style.color = 'var(--accent-light)';
   addLaneBtn.innerHTML = '<i class="fas fa-plus mr-2"></i>Add Lane';
   addLaneBtn.addEventListener('click', addLane);
   kanbanBoard.appendChild(addLaneBtn);
 }
 
-function addCard(laneId, content) {
+function addCard(laneId, title) {
   const lane = currentKanban.lanes.find(l => l.id === laneId);
   if (lane) {
-    lane.cards.push({ content, id: Date.now().toString() });
+    lane.cards.push({ title, id: Date.now().toString(), items: [] });
     saveKanban();
     renderKanban();
-  }
-}
-
-function editCard(laneId, cardId) {
-  const lane = currentKanban.lanes.find(l => l.id === laneId);
-  if (lane) {
-    const card = lane.cards.find(c => c.id === cardId);
-    if (card) {
-      const newContent = prompt('Edit card (markdown supported):', card.content);
-      if (newContent !== null) {
-        card.content = newContent;
-        saveKanban();
-        renderKanban();
-      }
-    }
   }
 }
 
@@ -633,3 +775,155 @@ socket.on('chat:history', (data) => {
     });
   }
 });
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Kanban Modal State
+let editingCard = null;
+let currentCardItems = [];
+
+// Modal button handlers
+document.getElementById('addSection').addEventListener('click', () => addItem('section'));
+document.getElementById('addBullet').addEventListener('click', () => addItem('bullet'));
+document.getElementById('addCheckbox').addEventListener('click', () => addItem('checkbox'));
+document.getElementById('saveCard').addEventListener('click', saveCard);
+document.getElementById('closeModal').addEventListener('click', closeModal);
+document.getElementById('cancelCard').addEventListener('click', closeModal);
+
+// Open modal for editing card
+function openCardModal(laneId, cardId) {
+  const lane = currentKanban.lanes.find(l => l.id === laneId);
+  const card = lane.cards.find(c => c.id === cardId);
+
+  // Migrate old format if needed
+  const migratedCard = migrateCard(card);
+
+  editingCard = { laneId, cardId };
+  currentCardItems = migratedCard.items || [];
+
+  document.getElementById('cardTitle').value = migratedCard.title || '';
+  renderCardItems();
+
+  document.getElementById('cardModal').classList.remove('hidden');
+}
+
+// Migrate old card format to new structure
+function migrateCard(card) {
+  if (card.content && !card.items) {
+    return {
+      id: card.id,
+      title: card.content.split('\n')[0] || 'Card',
+      items: []
+    };
+  }
+  return card;
+}
+
+// Render items in modal
+function renderCardItems() {
+  const container = document.getElementById('cardItems');
+  container.innerHTML = '';
+
+  currentCardItems.forEach((item, index) => {
+    const div = document.createElement('div');
+    div.className = 'card-item';
+    div.dataset.index = index;
+
+    const iconClass = {
+      'section': 'fa-heading',
+      'bullet': 'fa-circle',
+      'checkbox': 'fa-check-square'
+    }[item.type];
+
+    div.innerHTML = `
+      <div class="flex items-center gap-2">
+        <button class="move-up" ${index === 0 ? 'disabled' : ''} title="Move up">
+          <i class="fas fa-chevron-up text-xs"></i>
+        </button>
+        <button class="move-down" ${index === currentCardItems.length - 1 ? 'disabled' : ''} title="Move down">
+          <i class="fas fa-chevron-down text-xs"></i>
+        </button>
+        <i class="fas ${iconClass} text-gray-400"></i>
+        <input type="text" class="flex-1 item-content" value="${escapeHtml(item.content)}" placeholder="...">
+        <button class="delete" title="Delete">
+          <i class="fas fa-trash text-xs text-red-500"></i>
+        </button>
+      </div>
+    `;
+
+    // Event listeners
+    const upBtn = div.querySelector('.move-up');
+    const downBtn = div.querySelector('.move-down');
+    const input = div.querySelector('.item-content');
+    const deleteBtn = div.querySelector('.delete');
+
+    upBtn.addEventListener('click', () => moveItem(index, -1));
+    downBtn.addEventListener('click', () => moveItem(index, 1));
+    input.addEventListener('input', (e) => {
+      currentCardItems[index].content = e.target.value;
+    });
+    deleteBtn.addEventListener('click', () => deleteItem(index));
+
+    container.appendChild(div);
+  });
+}
+
+// Add new item
+function addItem(type) {
+  currentCardItems.push({
+    id: Date.now().toString(),
+    type: type,
+    content: '',
+    checked: type === 'checkbox' ? false : undefined
+  });
+  renderCardItems();
+}
+
+// Move item
+function moveItem(index, direction) {
+  const newIndex = index + direction;
+  if (newIndex < 0 || newIndex >= currentCardItems.length) return;
+
+  const [item] = currentCardItems.splice(index, 1);
+  currentCardItems.splice(newIndex, 0, item);
+  renderCardItems();
+}
+
+// Delete item
+function deleteItem(index) {
+  currentCardItems.splice(index, 1);
+  renderCardItems();
+}
+
+// Save card
+function saveCard() {
+  const title = document.getElementById('cardTitle').value || 'Untitled';
+
+  const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
+  const card = lane.cards.find(c => c.id === editingCard.cardId);
+
+  card.title = title;
+  card.items = currentCardItems;
+  delete card.content; // Remove old format
+
+  saveKanban();
+  renderKanban();
+  closeModal();
+}
+
+// Close modal
+function closeModal() {
+  document.getElementById('cardModal').classList.add('hidden');
+  editingCard = null;
+  currentCardItems = [];
+}
