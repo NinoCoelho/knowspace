@@ -306,7 +306,9 @@ function addMessage(content, role) {
 
   // Replace /vault/... paths with clickable links in assistant messages
   if (role === 'assistant') {
-    html = html.replace(/(?:\/vault\/)([\w\/\-_.]+)/g, (match, filePath) => {
+    html = html.replace(/(?:\/?)vault\/([\w\/\-_.]+)/g, (match, filePath) => {
+      // Skip directory paths (ending with /)
+      if (filePath.endsWith('/')) return match;
       const name = filePath.split('/').pop().replace(/\.(md|markdown)$/, '');
       return `<a class="vault-link" data-vault-path="${escapeHtml(filePath)}" href="javascript:void(0)"><i class="fas fa-file-alt"></i>${escapeHtml(name)}</a>`;
     });
@@ -680,12 +682,17 @@ async function openVaultPreview(filePath) {
     } catch { /* ignore */ }
   }
 
-  const file = vaultFiles.find(f =>
-    f.path === target ||
-    f.path === target + '.md' ||
-    f.path === target + '.markdown' ||
-    f.path.replace(/\.(md|markdown)$/, '') === target
+  const cleanTarget = target.replace(/\/+$/, '');
+  let file = vaultFiles.find(f =>
+    f.path === cleanTarget ||
+    f.path === cleanTarget + '.md' ||
+    f.path === cleanTarget + '.markdown' ||
+    f.path.replace(/\.(md|markdown)$/, '') === cleanTarget
   );
+  // If target looks like a directory, find first file inside it
+  if (!file) {
+    file = vaultFiles.find(f => f.path.startsWith(cleanTarget + '/'));
+  }
   if (!file) {
     alert('File not found: ' + filePath);
     return;
@@ -769,13 +776,20 @@ async function openVaultPreview(filePath) {
 
 async function loadFile(file) {
   try {
+    vaultEditing = false;
+    updateVaultEditBtn();
+
     const res = await fetch(`/api/vault/file?token=${token}&path=${file.path}`);
     const content = await res.text();
 
     const ext = file.path.split('.').pop().toLowerCase();
     const cleanName = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
+    const isTextFile = ['md', 'markdown', 'txt', 'json', 'csv'].includes(ext);
 
     vaultFileName.textContent = cleanName;
+    document.getElementById('vaultActions').style.display = 'flex';
+    // Only show edit button for text files
+    document.getElementById('vaultEditBtn').style.display = isTextFile ? '' : 'none';
 
     currentFile = file;
 
@@ -873,6 +887,71 @@ uploadBtn.addEventListener('click', () => {
   
   input.click();
 });
+
+// Vault edit & delete
+let vaultEditing = false;
+let vaultOriginalContent = '';
+
+document.getElementById('vaultEditBtn').addEventListener('click', async () => {
+  if (!currentFile) return;
+  const ext = currentFile.path.split('.').pop().toLowerCase();
+  if (!['md', 'markdown', 'txt', 'json', 'csv'].includes(ext)) return;
+
+  if (vaultEditing) {
+    // Save
+    const textarea = document.querySelector('.vault-editor');
+    if (textarea) {
+      await fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(currentFile.path)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: textarea.value })
+      });
+    }
+    vaultEditing = false;
+    loadFile(currentFile);
+  } else {
+    // Enter edit mode
+    const res = await fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(currentFile.path)}`);
+    vaultOriginalContent = await res.text();
+    vaultEditing = true;
+
+    const vaultContent = document.getElementById('vaultContent');
+    vaultContent.innerHTML = '';
+    const textarea = document.createElement('textarea');
+    textarea.className = 'vault-editor';
+    textarea.value = vaultOriginalContent;
+    vaultContent.appendChild(textarea);
+    textarea.focus();
+  }
+  updateVaultEditBtn();
+});
+
+document.getElementById('vaultDeleteBtn').addEventListener('click', async () => {
+  if (!currentFile) return;
+  if (!confirm(`Delete "${currentFile.path}"?`)) return;
+
+  await fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(currentFile.path)}`, {
+    method: 'DELETE'
+  });
+
+  currentFile = null;
+  vaultEditing = false;
+  document.getElementById('vaultFileName').textContent = 'Select a file';
+  document.getElementById('vaultContent').innerHTML = '';
+  document.getElementById('vaultActions').style.display = 'none';
+  loadVault();
+});
+
+function updateVaultEditBtn() {
+  const btn = document.getElementById('vaultEditBtn');
+  if (vaultEditing) {
+    btn.innerHTML = '<i class="fas fa-save"></i>';
+    btn.title = 'Save';
+  } else {
+    btn.innerHTML = '<i class="fas fa-pen"></i>';
+    btn.title = 'Edit';
+  }
+}
 
 // Kanban functionality
 let kanbanBoards = [];
@@ -1009,33 +1088,33 @@ function getDefaultKanban() {
   };
 }
 
+// Migrate old card format (items array) to new format (body markdown)
+function migrateCard(card) {
+  if (card.body !== undefined) return card;
+  let body = '';
+  if (card.items && card.items.length > 0) {
+    body = card.items.map(item => {
+      if (item.type === 'section') return '### ' + item.content;
+      if (item.type === 'checkbox') return '- [' + (item.checked ? 'x' : ' ') + '] ' + item.content;
+      if (item.type === 'bullet') return '- ' + item.content;
+      return item.content;
+    }).join('\n');
+  }
+  if (card.content && !card.items) {
+    body = card.content;
+  }
+  return { id: card.id, title: card.title || 'Untitled', body };
+}
+
 function renderCardContent(card) {
-  const migrated = migrateCard(card);
+  const c = migrateCard(card);
   let html = '';
-
-  if (migrated.title) {
-    html += `<div class="card-title">${escapeHtml(migrated.title)}</div>`;
+  if (c.title) {
+    html += `<div class="card-title">${escapeHtml(c.title)}</div>`;
   }
-
-  if (migrated.items && migrated.items.length > 0) {
-    html += '<div class="card-body">';
-    migrated.items.forEach((item, idx) => {
-      if (item.type === 'section') {
-        html += `<div class="card-section">${escapeHtml(item.content)}</div>`;
-      } else if (item.type === 'bullet') {
-        html += `<div class="card-bullet"><span>${escapeHtml(item.content)}</span></div>`;
-      } else if (item.type === 'checkbox') {
-        const checkedClass = item.checked ? 'checked' : '';
-        const checkedAttr = item.checked ? 'checked' : '';
-        html += `<div class="card-checkbox ${checkedClass}">
-          <input type="checkbox" ${checkedAttr} data-item-index="${idx}">
-          <span>${escapeHtml(item.content)}</span>
-        </div>`;
-      }
-    });
-    html += '</div>';
+  if (c.body) {
+    html += `<div class="card-body">${marked.parse(c.body)}</div>`;
   }
-
   return html;
 }
 
@@ -1073,7 +1152,7 @@ function renderKanban() {
           <i class="fas fa-plus"></i>
         </button>
       </div>
-      <div class="cards-container space-y-2 drop-zone" data-lane-id="${lane.id}" style="min-height: 80px;">
+      <div class="cards-container space-y-2 drop-zone" data-lane-id="${lane.id}">
         ${cardsHtml}
       </div>
     `;
@@ -1097,26 +1176,6 @@ function renderKanban() {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteCard(lane.id, btn.dataset.cardId);
-      });
-    });
-
-    // Checkbox toggle on cards
-    column.querySelectorAll('.card-checkbox input[type="checkbox"]').forEach(cb => {
-      cb.addEventListener('change', (e) => {
-        e.stopPropagation();
-        const cardEl = cb.closest('.kanban-card');
-        const cardId = cardEl.dataset.cardId;
-        const laneId = cardEl.dataset.laneId;
-        const itemIndex = parseInt(cb.dataset.itemIndex);
-        const cardLane = currentKanban.lanes.find(l => l.id === laneId);
-        const card = cardLane.cards.find(c => c.id === cardId);
-        const migrated = migrateCard(card);
-        if (migrated.items[itemIndex]) {
-          migrated.items[itemIndex].checked = cb.checked;
-          card.items = migrated.items;
-          saveKanban();
-          renderKanban();
-        }
       });
     });
 
@@ -1155,11 +1214,11 @@ function renderKanban() {
     });
   });
 
-  // Add lane button
+  // Add lane button — thin vertical strip
   const addLaneBtn = document.createElement('button');
-  addLaneBtn.className = 'px-6 py-3 rounded-lg font-medium min-w-64';
-  addLaneBtn.style.cssText = 'background:var(--bg-secondary);color:var(--accent-light);border:2px dashed var(--border-light);cursor:pointer;transition:all 0.15s;';
-  addLaneBtn.innerHTML = '<i class="fas fa-plus mr-2"></i>Add Lane';
+  addLaneBtn.className = 'add-lane-strip';
+  addLaneBtn.innerHTML = '<i class="fas fa-plus"></i>';
+  addLaneBtn.title = 'Add Lane';
   addLaneBtn.addEventListener('click', addLane);
   kanbanBoard.appendChild(addLaneBtn);
 }
@@ -1167,7 +1226,7 @@ function renderKanban() {
 function addCard(laneId, title) {
   const lane = currentKanban.lanes.find(l => l.id === laneId);
   if (lane) {
-    lane.cards.push({ title, id: Date.now().toString(), items: [] });
+    lane.cards.push({ title, id: Date.now().toString(), body: '' });
     saveKanban();
     renderKanban();
   }
@@ -1254,219 +1313,141 @@ function escapeHtml(text) {
 
 // Kanban Modal State
 let editingCard = null;
-let currentCardItems = [];
-let currentCardTitle = '';
-let modalTab = 'preview';
 
 // Modal button handlers
-document.getElementById('addSection').addEventListener('click', () => addItem('section'));
-document.getElementById('addBullet').addEventListener('click', () => addItem('bullet'));
-document.getElementById('addCheckbox').addEventListener('click', () => addItem('checkbox'));
 document.getElementById('saveCard').addEventListener('click', saveCard);
 document.getElementById('closeModal').addEventListener('click', closeModal);
 document.getElementById('cancelCard').addEventListener('click', closeModal);
-
-// Tab switching
-document.getElementById('tabPreview').addEventListener('click', () => switchModalTab('preview'));
-document.getElementById('tabEdit').addEventListener('click', () => switchModalTab('edit'));
-
-function switchModalTab(tab) {
-  modalTab = tab;
-  document.getElementById('tabPreview').classList.toggle('active', tab === 'preview');
-  document.getElementById('tabEdit').classList.toggle('active', tab === 'edit');
-  document.getElementById('cardPreviewPane').classList.toggle('hidden', tab !== 'preview');
-  document.getElementById('cardEditPane').classList.toggle('hidden', tab !== 'edit');
-
-  if (tab === 'preview') {
-    // Sync title from edit input
-    const titleInput = document.getElementById('cardTitle');
-    if (titleInput) currentCardTitle = titleInput.value;
-    renderCardPreview();
-  }
-}
-
-function renderCardPreview() {
-  const container = document.getElementById('cardPreviewPane');
-  let html = '';
-
-  if (currentCardTitle) {
-    html += `<div class="preview-title">${escapeHtml(currentCardTitle)}</div>`;
-  }
-
-  if (currentCardItems.length === 0 && !currentCardTitle) {
-    html += '<div class="preview-empty">This card is empty. Switch to Edit to add content.</div>';
-  }
-
-  currentCardItems.forEach(item => {
-    if (item.type === 'section') {
-      html += `<div class="preview-section">${escapeHtml(item.content)}</div>`;
-    } else if (item.type === 'bullet') {
-      html += `<div class="preview-bullet"><span>${escapeHtml(item.content)}</span></div>`;
-    } else if (item.type === 'checkbox') {
-      const checkedClass = item.checked ? 'checked' : '';
-      const checkedAttr = item.checked ? 'checked' : '';
-      html += `<div class="preview-checkbox ${checkedClass}">
-        <input type="checkbox" ${checkedAttr} disabled>
-        <span>${escapeHtml(item.content)}</span>
-      </div>`;
-    }
-  });
-
-  container.innerHTML = html;
-}
-
-// Open modal for editing card
-function openCardModal(laneId, cardId) {
-  const lane = currentKanban.lanes.find(l => l.id === laneId);
-  const card = lane.cards.find(c => c.id === cardId);
-
-  const migratedCard = migrateCard(card);
-
-  editingCard = { laneId, cardId };
-  currentCardItems = JSON.parse(JSON.stringify(migratedCard.items || []));
-  currentCardTitle = migratedCard.title || '';
-
-  document.getElementById('cardTitle').value = currentCardTitle;
-  document.getElementById('modalTitle').textContent = currentCardTitle || 'Card';
-
-  // Start on preview tab
-  switchModalTab('preview');
-  renderCardItems();
-
-  document.getElementById('cardModal').classList.remove('hidden');
-}
 
 // Close modal on overlay click
 document.getElementById('cardModal').addEventListener('click', (e) => {
   if (e.target === document.getElementById('cardModal')) closeModal();
 });
 
-// Migrate old card format to new structure
-function migrateCard(card) {
-  if (card.content && !card.items) {
-    return {
-      id: card.id,
-      title: card.content.split('\n')[0] || 'Card',
-      items: []
-    };
-  }
-  return card;
-}
+// WYSIWYG toolbar
+document.querySelectorAll('.wysiwyg-toolbar button[data-cmd]').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const editor = document.getElementById('cardEditor');
+    editor.focus();
+    const cmd = btn.dataset.cmd;
 
-// Render items in modal editor
-function renderCardItems() {
-  const container = document.getElementById('cardItems');
-  container.innerHTML = '';
-
-  currentCardItems.forEach((item, index) => {
-    const div = document.createElement('div');
-    div.className = 'card-item';
-
-    const iconMap = { 'section': 'fa-heading', 'bullet': 'fa-circle', 'checkbox': 'fa-check-square' };
-    const iconClass = iconMap[item.type] || 'fa-circle';
-
-    div.innerHTML = `
-      <div class="item-actions">
-        <button class="move-up" ${index === 0 ? 'disabled' : ''} title="Move up">
-          <i class="fas fa-chevron-up"></i>
-        </button>
-        <button class="move-down" ${index === currentCardItems.length - 1 ? 'disabled' : ''} title="Move down">
-          <i class="fas fa-chevron-down"></i>
-        </button>
-      </div>
-      <i class="fas ${iconClass} item-type-icon"></i>
-      <input type="text" class="item-content" value="${escapeHtml(item.content)}" placeholder="Type here...">
-      <div class="item-actions">
-        <button class="delete" title="Delete">
-          <i class="fas fa-trash" style="color:#dc2626;"></i>
-        </button>
-      </div>
-    `;
-
-    const upBtn = div.querySelector('.move-up');
-    const downBtn = div.querySelector('.move-down');
-    const input = div.querySelector('.item-content');
-    const deleteBtn = div.querySelector('.delete');
-
-    upBtn.addEventListener('click', () => moveItem(index, -1));
-    downBtn.addEventListener('click', () => moveItem(index, 1));
-    input.addEventListener('input', (e) => {
-      currentCardItems[index].content = e.target.value;
-    });
-    deleteBtn.addEventListener('click', () => deleteItem(index));
-
-    container.appendChild(div);
+    if (cmd === 'checkbox') {
+      document.execCommand('insertHTML', false, '<div><label class="cb-item"><input type="checkbox"><span>&nbsp;</span></label></div>');
+    } else {
+      document.execCommand(cmd, false, null);
+    }
   });
-}
+});
 
-// Add new item
-function addItem(type) {
-  currentCardItems.push({
-    id: Date.now().toString(),
-    type: type,
-    content: '',
-    checked: type === 'checkbox' ? false : undefined
+// Prevent # and ## at line starts in the editor
+document.getElementById('cardEditor').addEventListener('input', () => {
+  const editor = document.getElementById('cardEditor');
+  // Strip heading markers from text nodes at start of blocks
+  editor.querySelectorAll('h1, h2, h3').forEach(h => {
+    const p = document.createElement('p');
+    p.innerHTML = h.innerHTML;
+    h.replaceWith(p);
   });
-  renderCardItems();
+});
 
-  // Focus the new input
-  setTimeout(() => {
-    const inputs = document.querySelectorAll('#cardItems .item-content');
-    if (inputs.length > 0) inputs[inputs.length - 1].focus();
-  }, 50);
+// Convert editor HTML to markdown
+function htmlToMarkdown(el) {
+  let md = '';
+  el.childNodes.forEach(node => {
+    if (node.nodeType === 3) {
+      md += node.textContent;
+    } else if (node.nodeType === 1) {
+      const tag = node.tagName.toLowerCase();
+      if (tag === 'br') {
+        md += '\n';
+      } else if (tag === 'div' || tag === 'p') {
+        const inner = htmlToMarkdown(node).trim();
+        if (inner) md += '\n' + inner;
+      } else if (tag === 'strong' || tag === 'b') {
+        md += '**' + htmlToMarkdown(node) + '**';
+      } else if (tag === 'em' || tag === 'i') {
+        md += '*' + htmlToMarkdown(node) + '*';
+      } else if (tag === 'ul' || tag === 'ol') {
+        node.querySelectorAll(':scope > li').forEach(li => {
+          md += '\n- ' + htmlToMarkdown(li).trim();
+        });
+      } else if (tag === 'label' && node.classList.contains('cb-item')) {
+        const checked = node.querySelector('input[type="checkbox"]')?.checked;
+        const span = node.querySelector('span');
+        const text = (span ? span.textContent : '').replace(/\u00a0/g, '').trim();
+        md += '\n- [' + (checked ? 'x' : ' ') + '] ' + text;
+      } else if (tag === 'input' && node.type === 'checkbox') {
+        // skip, handled by parent label
+      } else {
+        md += htmlToMarkdown(node);
+      }
+    }
+  });
+  return md;
 }
 
-// Move item
-function moveItem(index, direction) {
-  const newIndex = index + direction;
-  if (newIndex < 0 || newIndex >= currentCardItems.length) return;
-
-  const [item] = currentCardItems.splice(index, 1);
-  currentCardItems.splice(newIndex, 0, item);
-  renderCardItems();
+// Convert markdown to editor HTML
+function markdownToEditorHtml(md) {
+  if (!md) return '';
+  return md.split('\n').map(line => {
+    const cbMatch = line.match(/^- \[([ x])\] (.*)$/);
+    if (cbMatch) {
+      const checked = cbMatch[1] === 'x' ? ' checked' : '';
+      return `<div><label class="cb-item"><input type="checkbox"${checked}><span>${escapeHtml(cbMatch[2])}</span></label></div>`;
+    }
+    // Use marked for inline formatting (bold, italic, etc) but keep as a div
+    const inlineHtml = marked.parseInline(line);
+    return `<div>${inlineHtml || '<br>'}</div>`;
+  }).join('');
 }
 
-// Delete item
-function deleteItem(index) {
-  currentCardItems.splice(index, 1);
-  renderCardItems();
-}
+// Open modal for editing card
+function openCardModal(laneId, cardId) {
+  const lane = currentKanban.lanes.find(l => l.id === laneId);
+  const card = migrateCard(lane.cards.find(c => c.id === cardId));
 
-// Save card
-function openNewCardModal(laneId) {
-  editingCard = { laneId, cardId: null }; // null cardId = new card
-  currentCardItems = [];
-  currentCardTitle = '';
+  editingCard = { laneId, cardId };
 
-  document.getElementById('cardTitle').value = '';
-  document.getElementById('modalTitle').textContent = 'New Card';
-
-  switchModalTab('edit');
-  renderCardItems();
+  document.getElementById('cardTitle').value = card.title || '';
+  document.getElementById('modalTitle').textContent = card.title || 'Card';
+  document.getElementById('cardEditor').innerHTML = markdownToEditorHtml(card.body || '');
 
   document.getElementById('cardModal').classList.remove('hidden');
 }
 
+function openNewCardModal(laneId) {
+  editingCard = { laneId, cardId: null };
+
+  document.getElementById('cardTitle').value = '';
+  document.getElementById('modalTitle').textContent = 'New Card';
+  document.getElementById('cardEditor').innerHTML = '';
+
+  document.getElementById('cardModal').classList.remove('hidden');
+  document.getElementById('cardTitle').focus();
+}
+
 function saveCard() {
   const title = document.getElementById('cardTitle').value || 'Untitled';
+  const editor = document.getElementById('cardEditor');
+  // Sanitize: strip any # or ## at start of lines
+  let body = htmlToMarkdown(editor).trim();
+  body = body.replace(/^#{1,2}\s/gm, '');
 
   const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
   if (!lane) return;
 
   if (editingCard.cardId) {
-    // Edit existing card
     const card = lane.cards.find(c => c.id === editingCard.cardId);
     if (card) {
       card.title = title;
-      card.items = currentCardItems;
-      delete card.content;
+      card.body = body;
     }
   } else {
-    // New card
     lane.cards.push({
       id: Date.now().toString(),
       title,
-      items: currentCardItems,
+      body,
     });
   }
 
@@ -1475,12 +1456,9 @@ function saveCard() {
   closeModal();
 }
 
-// Close modal
 function closeModal() {
   document.getElementById('cardModal').classList.add('hidden');
   editingCard = null;
-  currentCardItems = [];
-  currentCardTitle = '';
 }
 
 // --- Sidebar collapse & resize ---

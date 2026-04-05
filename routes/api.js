@@ -82,6 +82,54 @@ router.get('/vault/file', (req, res) => {
   }
 });
 
+// Save vault file
+router.put('/vault/file', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const filePath = req.query.path;
+
+  if (!filePath) return res.status(400).json({ error: 'File path required' });
+
+  const vaultBase = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const fullPath = path.resolve(vaultBase, filePath);
+
+  if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    const dir = path.dirname(fullPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(fullPath, req.body.content || '', 'utf8');
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error saving file:', error);
+    res.status(500).json({ error: 'Failed to save file' });
+  }
+});
+
+// Delete vault file
+router.delete('/vault/file', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const filePath = req.query.path;
+
+  if (!filePath) return res.status(400).json({ error: 'File path required' });
+
+  const vaultBase = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const fullPath = path.resolve(vaultBase, filePath);
+
+  if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error deleting file:', error);
+    res.status(500).json({ error: 'Failed to delete file' });
+  }
+});
+
 // Search vault files
 router.get('/vault/search', (req, res) => {
   const clientSlug = req.clientSlug;
@@ -227,14 +275,41 @@ function parseKanbanMarkdown(content) {
 
   let currentLane = null;
   let currentCard = null;
-  let cardDepth = 0;
+  let bodyLines = [];
+  let inFrontmatter = false;
+  let inObsidianBlock = false;
+  let laneUsesHeaders = false;
+
+  function pushCard() {
+    if (currentCard && currentLane) {
+      currentCard.body = bodyLines.join('\n').trim();
+      currentLane.cards.push(currentCard);
+    }
+    bodyLines = [];
+  }
 
   lines.forEach(line => {
-    const trimmed = line.trim();
+    // Skip frontmatter
+    if (line.trim() === '---') {
+      inFrontmatter = !inFrontmatter;
+      return;
+    }
+    if (inFrontmatter) return;
 
+    // Skip Obsidian settings block
+    if (line.trim().startsWith('%%')) {
+      inObsidianBlock = !inObsidianBlock;
+      return;
+    }
+    if (inObsidianBlock) return;
+
+    // Board title: # Title
+    if (/^# /.test(line) && !line.startsWith('## ') && !line.startsWith('### ')) {
+      kanban.title = line.replace(/^# /, '').trim();
+    }
     // Lane header: ## Lane Title
-    if (line.startsWith('## ')) {
-      if (currentCard && currentLane) currentLane.cards.push(currentCard);
+    else if (line.startsWith('## ')) {
+      pushCard();
       if (currentLane) kanban.lanes.push(currentLane);
 
       currentLane = {
@@ -243,49 +318,34 @@ function parseKanbanMarkdown(content) {
         cards: []
       };
       currentCard = null;
-      cardDepth = 0;
+      laneUsesHeaders = false;
     }
-    // Card title (bullet at lane level): - Card Title
-    else if (trimmed.match(/^- /) && cardDepth === 0) {
-      if (currentCard && currentLane) currentLane.cards.push(currentCard);
-
+    // Card header: ### Card Title
+    else if (line.startsWith('### ') && currentLane) {
+      pushCard();
+      laneUsesHeaders = true;
       currentCard = {
         id: Date.now().toString() + Math.random(),
-        title: trimmed.replace(/^- /, ''),
-        items: []
+        title: line.replace('### ', '').trim(),
+        body: ''
       };
-      cardDepth = 1;
     }
-    // Section header: ### Section Title
-    else if (line.startsWith('### ') && currentCard) {
-      currentCard.items.push({
+    // Legacy card: non-indented bullet "- Card Title" (old format, only when lane has no ### cards)
+    else if (/^- /.test(line) && !/^[\t ]/.test(line) && currentLane && !laneUsesHeaders) {
+      pushCard();
+      currentCard = {
         id: Date.now().toString() + Math.random(),
-        type: 'section',
-        content: line.replace('### ', '').trim()
-      });
+        title: line.replace(/^- (\[[ x]\] )?/, '').trim(),
+        body: ''
+      };
     }
-    // Checkbox: - [x] Item or - [ ] Item
-    else if (trimmed.match(/^- \[[ x]\]/) && currentCard) {
-      const isComplete = trimmed.includes('[x]');
-      const content = trimmed.replace(/^- \[[ x]\] /, '').trim();
-      currentCard.items.push({
-        id: Date.now().toString() + Math.random(),
-        type: 'checkbox',
-        content,
-        checked: isComplete
-      });
-    }
-    // Bullet item (indented): - Item
-    else if (trimmed.match(/^- /) && currentCard) {
-      currentCard.items.push({
-        id: Date.now().toString() + Math.random(),
-        type: 'bullet',
-        content: trimmed.replace(/^- /, '').trim()
-      });
+    // Card body content
+    else if (currentCard) {
+      bodyLines.push(line);
     }
   });
 
-  if (currentCard && currentLane) currentLane.cards.push(currentCard);
+  pushCard();
   if (currentLane) kanban.lanes.push(currentLane);
 
   return kanban;
@@ -298,23 +358,11 @@ function serializeKanbanMarkdown(kanban) {
     markdown += `## ${lane.title}\n\n`;
 
     lane.cards.forEach(card => {
-      // Card title
-      markdown += `- ${card.title}\n`;
-
-      // Card items
-      if (card.items && card.items.length > 0) {
-        card.items.forEach(item => {
-          if (item.type === 'section') {
-            markdown += `  ### ${item.content}\n`;
-          } else if (item.type === 'bullet') {
-            markdown += `  - ${item.content}\n`;
-          } else if (item.type === 'checkbox') {
-            const checkbox = item.checked ? '[x]' : '[ ]';
-            markdown += `  - ${checkbox} ${item.content}\n`;
-          }
-        });
-        markdown += '\n';
+      markdown += `### ${card.title}\n`;
+      if (card.body) {
+        markdown += card.body + '\n';
       }
+      markdown += '\n';
     });
   });
 
