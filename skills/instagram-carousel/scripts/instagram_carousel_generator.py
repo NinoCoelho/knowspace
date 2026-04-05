@@ -25,7 +25,7 @@ DEFAULT_CONFIG_PATH = ".openclaw/instagram-carousel.json"
 
 def get_workspace_path() -> Path:
     """Get workspace path from environment or default"""
-    workspace = os.environ.get("OPENCLAW_WORKSPACE", os.path.expanduser("~/.openclaw/workspace"))
+    workspace = os.environ.get("KNOWSPACE_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE") or os.path.expanduser("~/.openclaw/workspace")
     return Path(workspace)
 
 

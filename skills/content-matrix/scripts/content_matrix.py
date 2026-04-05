@@ -37,7 +37,7 @@ def get_skills_path():
         return Path(env_path)
     
     # Check for workspace environment variable
-    workspace = os.environ.get('OPENCLAW_WORKSPACE')
+    workspace = os.environ.get('KNOWSPACE_WORKSPACE') or os.environ.get('OPENCLAW_WORKSPACE')
     if workspace:
         return Path(workspace) / 'skills' / 'public'
     
@@ -51,7 +51,7 @@ def get_skills_path():
 def get_state_path():
     """Get state storage path"""
     # Use workspace if available
-    workspace = os.environ.get('OPENCLAW_WORKSPACE')
+    workspace = os.environ.get('KNOWSPACE_WORKSPACE') or os.environ.get('OPENCLAW_WORKSPACE')
     if workspace:
         state_path = Path(workspace) / '.openclaw' / 'content-matrix'
     else:
@@ -402,7 +402,7 @@ Exemplos:
 
 Environment Variables:
   CONTENT_MATRIX_SKILLS_PATH  Override skills location
-  OPENCLAW_WORKSPACE          Workspace directory (for state storage)
+  KNOWSPACE_WORKSPACE         Workspace directory (for state storage)
 
 Workflow de Publicação:
   1. Gerar conteúdo: python content_matrix.py generate --titulo "Tema"

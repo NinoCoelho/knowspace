@@ -37,7 +37,7 @@ def create_workspace(client_slug: str, base_path: str = None):
     for subdir in vault_subdirs:
         (vault_path / subdir).mkdir(parents=True, exist_ok=True)
     
-    # Create .openclaw config directory
+    # Create engine config directory
     openclaw_path = workspace_path.parent / ".openclaw"
     openclaw_path.mkdir(parents=True, exist_ok=True)
     
@@ -382,7 +382,7 @@ Each client workspace has its own vault. Skills read/write to their specific sub
 **Never store data outside vault/ unless it's:**
 - Memory files (MEMORY.md, memory/*.md)
 - Configuration (USER.md, SOUL.md, IDENTITY.md, AGENTS.md)
-- OpenClaw config (../.openclaw/config.json)
+- Engine config (../.openclaw/config.json)
 
 ## 📚 Why Vault?
 
@@ -566,7 +566,7 @@ def print_summary(client_data: dict, workspace_path: Path, config_path: Path):
     print(f"  Bot Username: @{client_data.get('bot_username', 'TBD')}")
     
     print("\n" + "="*60)
-    print("⚠️  NEXT: Register with OpenClaw Multi-Agent System")
+    print("⚠️  NEXT: Register with the agent system")
     print("="*60)
     
     print("\nRun these commands to complete setup:\n")

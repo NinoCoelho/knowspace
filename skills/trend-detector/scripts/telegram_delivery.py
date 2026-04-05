@@ -24,7 +24,7 @@ from datetime import datetime
 
 def get_workspace_dir() -> Path:
     """Get the current workspace directory"""
-    workspace = os.environ.get("OPENCLAW_WORKSPACE")
+    workspace = os.environ.get("KNOWSPACE_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE")
     if workspace:
         return Path(workspace)
     
@@ -38,8 +38,8 @@ def get_workspace_dir() -> Path:
 def find_skill_path(skill_name: str) -> Optional[Path]:
     """Find a skill directory in multiple possible locations"""
     locations = [
-        Path.home() / ".npm-global" / "lib" / "node_modules" / "openclaw" / "skills" / skill_name,
         get_workspace_dir() / "skills" / "public" / skill_name,
+        Path.home() / ".npm-global" / "lib" / "node_modules" / "openclaw" / "skills" / skill_name,
         Path.home() / ".openclaw" / "workspace" / "skills" / "public" / skill_name,
     ]
     

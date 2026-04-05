@@ -44,7 +44,7 @@ from enum import Enum
 def get_workspace_dir() -> Path:
     """Get the current workspace directory"""
     # Try environment variable first
-    workspace = os.environ.get("OPENCLAW_WORKSPACE")
+    workspace = os.environ.get("KNOWSPACE_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE")
     if workspace:
         return Path(workspace)
     
@@ -69,11 +69,11 @@ def find_skill_path(skill_name: str) -> Optional[Path]:
     """
     # Possible locations in order of preference
     locations = [
+        # Workspace-level skills
+        get_workspace_dir() / "skills" / "public" / skill_name,
         # Global shared skills
         Path.home() / ".npm-global" / "lib" / "node_modules" / "openclaw" / "skills" / skill_name,
-        # Workspace-level skills (for backward compatibility)
-        get_workspace_dir() / "skills" / "public" / skill_name,
-        # Legacy location
+        # Legacy fallback
         Path.home() / ".openclaw" / "workspace" / "skills" / "public" / skill_name,
     ]
     

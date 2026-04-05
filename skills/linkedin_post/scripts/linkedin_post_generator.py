@@ -37,7 +37,8 @@ try:
     # Try to import from various possible locations
     ARTIFACTS_SAVER_PATHS = [
         Path(__file__).parent.parent.parent,  # Same skills directory
-        Path.home() / ".openclaw" / "workspace" / "skills" / "public",  # Client workspace
+        Path(os.environ.get("KNOWSPACE_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE") or "") / "skills" / "public",
+        Path.home() / ".openclaw" / "workspace" / "skills" / "public",  # Legacy fallback
     ]
     
     for path in ARTIFACTS_SAVER_PATHS:
