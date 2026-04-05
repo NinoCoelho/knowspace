@@ -11,7 +11,8 @@ if (!clientSlug) {
 }
 
 const token = authManager.generateToken(clientSlug);
-const link = `http://localhost:3445/?token=${token}`;
+const baseUrl = process.env.KNOWSPACE_BASE_URL || 'http://localhost:3445';
+const link = `${baseUrl}/auth?token=${token}`;
 
 console.log('\n=== Token Generated ===\n');
 console.log(`Client: ${clientSlug}`);

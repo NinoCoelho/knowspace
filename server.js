@@ -5,10 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const cookieParser = require('cookie-parser');
-const crypto = require('crypto');
 const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
-const { gatewayRpc } = require('./lib/gateway');
+const engine = require('./adapters/engine');
 
 const app = express();
 const server = http.createServer(app);
@@ -67,100 +66,7 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-// Gateway helpers for chat history and sessions
-
-function extractMessageText(message) {
-  if (!message || !message.content) return '';
-  if (typeof message.content === 'string') return message.content;
-  if (Array.isArray(message.content)) {
-    return message.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('');
-  }
-  return '';
-}
-
-// System/internal messages that should never appear in client chat
-const INTERNAL_MESSAGE_PATTERNS = [
-  /^An async command did not run\b/,
-  /\bExec denied\b.*\bapproval-timeout\b/,
-  /\bDo not run the command again\b/,
-  /\bDo not mention, summarize, or reuse output\b/,
-  /\bReply to the user in a helpful way\b/,
-  /\bdo not claim there is new command output\b/i,
-];
-
-function isInternalMessage(text) {
-  return INTERNAL_MESSAGE_PATTERNS.some(p => p.test(text));
-}
-
-function normalizeMessages(messages) {
-  return (messages || [])
-    .filter(m => (m.role === 'user' || m.role === 'assistant'))
-    .map(m => {
-      let text = extractMessageText(m);
-      // Remove timestamp prefix from user messages
-      if (m.role === 'user') {
-        text = text.replace(/^\[[\w\s:-]+\]\s*/, '');
-      }
-      return { role: m.role, content: text, timestamp: m.timestamp };
-    })
-    .filter(m => m.content)
-    .filter(m => !isInternalMessage(m.content));
-}
-
-async function loadGatewayHistory(sessionKey, limit = 50) {
-  try {
-    const result = await gatewayRpc('chat.history', { sessionKey, limit });
-    return normalizeMessages(result.messages);
-  } catch (error) {
-    console.error('Error loading gateway history:', error.message);
-    return [];
-  }
-}
-
-async function listClientSessions(clientSlug, retries = 2) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const result = await gatewayRpc('sessions.list', {
-        limit: 50,
-        includeLastMessage: true,
-        includeDerivedTitles: true,
-      });
-      const prefix = `agent:${clientSlug}:`;
-      const sessions = (result.sessions || [])
-        .filter(s => s.key && s.key.startsWith(prefix))
-        .map(s => ({
-          key: s.key,
-          label: s.label || s.derivedTitle || s.title || s.key.split(':').pop(),
-          updatedAt: s.updatedAt,
-          totalTokens: s.totalTokens,
-        }));
-
-      // Filter out sessions whose .jsonl files no longer exist on disk
-      try {
-        const sessionsJsonPath = path.join(process.env.HOME || '/home/nino', '.openclaw', 'agents', clientSlug, 'sessions', 'sessions.json');
-        const sessionsData = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf8'));
-        return sessions.filter(s => {
-          const entry = sessionsData[s.key];
-          if (!entry || !entry.sessionFile) return true; // keep if we can't determine
-          return fs.existsSync(entry.sessionFile);
-        });
-      } catch {
-        return sessions; // fallback: return all if sessions.json is unreadable
-      }
-    } catch (error) {
-      if (attempt < retries) {
-        console.log(`[gateway] Retrying sessions.list (attempt ${attempt + 2})...`);
-        await new Promise(r => setTimeout(r, 1000));
-      } else {
-        console.error('Error listing sessions:', error.message);
-        return [];
-      }
-    }
-  }
-}
+// Gateway operations are handled by adapters/engine (sessions, chat, messages, paths)
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -247,8 +153,8 @@ app.get('/api/chat/history', async (req, res) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
 
-  const sessionKey = req.query.sessionKey || `agent:${clientSlug}:main`;
-  const history = await loadGatewayHistory(sessionKey);
+  const sessionKey = req.query.sessionKey || engine.paths.getDefaultSessionKey(clientSlug);
+  const history = await engine.chat.loadHistory(sessionKey);
   res.json({ messages: history });
 });
 
@@ -332,7 +238,7 @@ app.post('/admin/tokens/generate', (req, res) => {
   const token = authManager.generateToken(clientSlug);
   res.json({ 
     token, 
-    link: `http://localhost:3445/?token=${token}` 
+    link: `${BASE_URL}/auth?token=${token}`
   });
 });
 
@@ -345,7 +251,7 @@ app.post('/admin/tokens/rotate', (req, res) => {
   const token = authManager.rotateToken(clientSlug);
   res.json({ 
     token, 
-    link: `http://localhost:3445/?token=${token}` 
+    link: `${BASE_URL}/auth?token=${token}`
   });
 });
 
@@ -382,13 +288,13 @@ io.on('connection', async (socket) => {
 
   // Send session list and load the most recent session's history
   try {
-    const sessions = await listClientSessions(socket.clientSlug);
+    const sessions = await engine.sessions.listSessions(socket.clientSlug);
     socket.emit('sessions:list', { sessions });
 
     if (sessions.length > 0) {
       // Auto-select the most recent session
       socket.activeSessionKey = sessions[0].key;
-      const history = await loadGatewayHistory(sessions[0].key);
+      const history = await engine.chat.loadHistory(sessions[0].key);
       socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
     }
   } catch (error) {
@@ -399,7 +305,7 @@ io.on('connection', async (socket) => {
 
   socket.on('sessions:list', async () => {
     try {
-      const sessions = await listClientSessions(socket.clientSlug);
+      const sessions = await engine.sessions.listSessions(socket.clientSlug);
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:list error:', error.message);
@@ -409,7 +315,7 @@ io.on('connection', async (socket) => {
   socket.on('sessions:switch', async (data) => {
     try {
       socket.activeSessionKey = data.sessionKey;
-      const history = await loadGatewayHistory(data.sessionKey);
+      const history = await engine.chat.loadHistory(data.sessionKey);
       socket.emit('chat:history', { messages: history, sessionKey: data.sessionKey });
     } catch (error) {
       console.error('sessions:switch error:', error.message);
@@ -418,14 +324,12 @@ io.on('connection', async (socket) => {
 
   socket.on('sessions:new', async () => {
     try {
-      // Create a new session via gateway
-      const friendlyId = `agent:${socket.clientSlug}:web:direct:portal-${crypto.randomUUID()}`;
-      await gatewayRpc('sessions.patch', { key: friendlyId });
-      socket.activeSessionKey = friendlyId;
+      const newKey = await engine.sessions.createSession(socket.clientSlug);
+      socket.activeSessionKey = newKey;
 
       // Clear chat and refresh session list
-      socket.emit('chat:history', { messages: [], sessionKey: friendlyId });
-      const sessions = await listClientSessions(socket.clientSlug);
+      socket.emit('chat:history', { messages: [], sessionKey: newKey });
+      const sessions = await engine.sessions.listSessions(socket.clientSlug);
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:new error:', error.message);
@@ -434,8 +338,8 @@ io.on('connection', async (socket) => {
 
   socket.on('sessions:rename', async (data) => {
     try {
-      await gatewayRpc('sessions.patch', { key: data.sessionKey, label: data.name });
-      const sessions = await listClientSessions(socket.clientSlug);
+      await engine.sessions.renameSession(data.sessionKey, data.name);
+      const sessions = await engine.sessions.listSessions(socket.clientSlug);
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:rename error:', error.message);
@@ -444,14 +348,14 @@ io.on('connection', async (socket) => {
 
   socket.on('sessions:delete', async (data) => {
     try {
-      await gatewayRpc('sessions.delete', { key: data.sessionKey });
+      await engine.sessions.deleteSession(data.sessionKey);
 
       // If deleting the active session, switch to the next available
       if (socket.activeSessionKey === data.sessionKey) {
-        const sessions = await listClientSessions(socket.clientSlug);
+        const sessions = await engine.sessions.listSessions(socket.clientSlug);
         if (sessions.length > 0) {
           socket.activeSessionKey = sessions[0].key;
-          const history = await loadGatewayHistory(sessions[0].key);
+          const history = await engine.chat.loadHistory(sessions[0].key);
           socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
         } else {
           socket.activeSessionKey = null;
@@ -459,7 +363,7 @@ io.on('connection', async (socket) => {
         }
         socket.emit('sessions:list', { sessions });
       } else {
-        const sessions = await listClientSessions(socket.clientSlug);
+        const sessions = await engine.sessions.listSessions(socket.clientSlug);
         socket.emit('sessions:list', { sessions });
       }
     } catch (error) {
@@ -480,8 +384,7 @@ io.on('connection', async (socket) => {
 
       // Ensure we have an active session
       if (!socket.activeSessionKey) {
-        socket.activeSessionKey = `agent:${socket.clientSlug}:web:direct:portal-${crypto.randomUUID()}`;
-        await gatewayRpc('sessions.patch', { key: socket.activeSessionKey });
+        socket.activeSessionKey = await engine.sessions.createSession(socket.clientSlug);
       }
 
       const sessionKey = socket.activeSessionKey;
@@ -501,100 +404,32 @@ io.on('connection', async (socket) => {
       console.log(`[chat] ${socket.clientSlug}: sending to ${sessionKey}`);
 
       // Get message count before sending so we can detect the new reply
-      const historyBefore = await loadGatewayHistory(sessionKey, 50);
+      const historyBefore = await engine.chat.loadHistory(sessionKey, 50);
       const msgCountBefore = historyBefore.length;
 
-      // Send via the singleton gateway client
-      await gatewayRpc('chat.send', {
-        sessionKey,
-        message: messageText,
-        deliver: true,
-        timeoutMs: 30 * 60 * 1000,
-        idempotencyKey: crypto.randomUUID(),
+      // Send via the engine adapter
+      await engine.chat.sendMessage(sessionKey, messageText);
+
+      // Poll for the assistant response
+      const result = await engine.chat.pollForReply(sessionKey, msgCountBefore, {
+        onProgress: (status) => socket.emit('agent:progress', { status }),
+        isDisconnected: () => socket.disconnected,
       });
 
-      // Poll for the assistant response (chat.send is async)
-      const POLL_INTERVAL = 2000;
-      const MAX_POLLS = 900; // 30 minutes (900 × 2s)
-      let found = false;
-      let lastStatus = 'thinking';
-
-      for (let i = 0; i < MAX_POLLS; i++) {
-        await new Promise(r => setTimeout(r, POLL_INTERVAL));
-
-        // Check if socket disconnected — stop polling
-        if (socket.disconnected) {
-          sessionProcessing.set(sessionKey, false);
-          found = true; // not really found, but don't send error to dead socket
-          break;
-        }
-
-        let rawHistory;
-        try {
-          const result = await gatewayRpc('chat.history', { sessionKey, limit: 50 });
-          rawHistory = result.messages || [];
-        } catch {
-          continue; // transient gateway error, keep polling
-        }
-
-        if (rawHistory.length > msgCountBefore) {
-          const newRaw = rawHistory.slice(msgCountBefore);
-
-          // Detect agent activity from raw messages to report progress
-          let currentStatus = 'thinking';
-          for (const m of newRaw) {
-            if (Array.isArray(m.content)) {
-              for (const block of m.content) {
-                if (block.type === 'tool_use') currentStatus = 'executing';
-                if (block.type === 'tool_result') currentStatus = 'thinking';
-              }
-            }
-          }
-
-          // Emit progress update if status changed
-          if (currentStatus !== lastStatus) {
-            lastStatus = currentStatus;
-            socket.emit('agent:progress', { status: currentStatus });
-          }
-
-          // Check for a final assistant reply (text content, not just tool use)
-          const normalizedNew = normalizeMessages(newRaw);
-          const assistantReply = normalizedNew.filter(m => m.role === 'assistant').pop();
-
-          if (assistantReply) {
-            // Verify this is a real final reply, not an intermediate tool-calling message
-            const lastRaw = newRaw.filter(m => m.role === 'assistant').pop();
-            const hasToolUse = Array.isArray(lastRaw?.content) &&
-              lastRaw.content.some(b => b.type === 'tool_use');
-            const hasText = Array.isArray(lastRaw?.content)
-              ? lastRaw.content.some(b => b.type === 'text' && b.text.trim())
-              : typeof lastRaw?.content === 'string' && lastRaw.content.trim();
-
-            // If the last assistant message has tool_use, the agent is still working
-            if (hasToolUse && !hasText) continue;
-
-            sessionProcessing.set(sessionKey, false);
-            socket.emit('typing', { typing: false });
-            socket.emit('chat:message', {
-              role: 'assistant',
-              content: assistantReply.content,
-              timestamp: assistantReply.timestamp || new Date().toISOString(),
-            });
-            found = true;
-            break;
-          }
-        }
-      }
-
-      if (!found) {
+      if (result.disconnected) {
+        sessionProcessing.set(sessionKey, false);
+      } else if (result.found && result.reply) {
         sessionProcessing.set(sessionKey, false);
         socket.emit('typing', { typing: false });
-        // After 30 minutes, the agent likely stalled — but don't fake an error message
+        socket.emit('chat:message', result.reply);
+      } else {
+        sessionProcessing.set(sessionKey, false);
+        socket.emit('typing', { typing: false });
         console.log(`[chat] ${socket.clientSlug}: agent polling timed out after 30 min for ${sessionKey}`);
       }
 
       // Refresh session list (title may have been derived from first message)
-      const sessions = await listClientSessions(socket.clientSlug);
+      const sessions = await engine.sessions.listSessions(socket.clientSlug);
       socket.emit('sessions:list', { sessions });
 
     } catch (error) {
@@ -619,8 +454,29 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-const PORT = process.env.PORT || 3445;
+const PORT = process.env.KNOWSPACE_PORT || process.env.PORT || 3445;
+const BASE_URL = process.env.KNOWSPACE_BASE_URL || `http://localhost:${PORT}`;
+
 server.listen(PORT, () => {
-  console.log(`Client Portal running on port ${PORT}`);
-  console.log(`Access via: http://localhost:3445/?token=<token>`);
+  console.log(`Knowspace portal running on port ${PORT}`);
+
+  // First-boot: auto-generate admin token if no tokens exist
+  const existingTokens = authManager.listTokens();
+  if (existingTokens.length === 0) {
+    const adminSlug = process.env.KNOWSPACE_ADMIN_SLUG || 'main';
+    const token = authManager.generateToken(adminSlug);
+    console.log('');
+    console.log('  ╔══════════════════════════════════════════════════════════╗');
+    console.log('  ║  FIRST BOOT — Admin token generated automatically       ║');
+    console.log('  ╠══════════════════════════════════════════════════════════╣');
+    console.log(`  ║  Client:  ${adminSlug.padEnd(46)} ║`);
+    console.log(`  ║  Token:   ${token.substring(0, 16)}...${token.substring(token.length - 8).padEnd(25)} ║`);
+    console.log('  ║                                                          ║');
+    console.log('  ║  Access link (share with system owner):                  ║');
+    console.log(`  ║  ${(BASE_URL + '/auth?token=' + token).padEnd(56)} ║`);
+    console.log('  ║                                                          ║');
+    console.log('  ║  This message only appears once. Save the link above.    ║');
+    console.log('  ╚══════════════════════════════════════════════════════════╝');
+    console.log('');
+  }
 });

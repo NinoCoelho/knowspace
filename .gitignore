@@ -1,4 +1,6 @@
 node_modules/
 .tokens.json
 .device-keys.json
+.env
 skills/**/__pycache__
+data/

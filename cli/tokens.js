@@ -73,11 +73,12 @@ module.exports = async function tokens(argv) {
 };
 
 function printToken(slug, token) {
+  const baseUrl = process.env.KNOWSPACE_BASE_URL || 'http://localhost:3445';
   console.log(`
   === Token Generated ===
 
   Client:  ${slug}
   Token:   ${token}
-  Link:    http://localhost:3445/?token=${token}
+  Link:    ${baseUrl}/auth?token=${token}
 `);
 }

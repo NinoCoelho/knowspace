@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const TOKENS_FILE = path.join(__dirname, '..', '.tokens.json');
+const TOKENS_FILE = process.env.KNOWSPACE_TOKENS_FILE || path.join(__dirname, '..', '.tokens.json');
 
 class AuthManager {
   constructor() {

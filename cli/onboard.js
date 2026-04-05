@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const AuthManager = require('../middleware/auth');
+const enginePaths = require('../adapters/engine/paths');
 
 const SKILLS = [
   'client-onboard',
@@ -13,14 +14,7 @@ const SKILLS = [
   'herenow',
 ];
 
-const DEFAULT_SKILLS_TARGET = path.join(
-  os.homedir(),
-  '.npm-global',
-  'lib',
-  'node_modules',
-  'openclaw',
-  'skills'
-);
+const DEFAULT_SKILLS_TARGET = enginePaths.getSkillsTargetPath();
 
 module.exports = function onboard(argv) {
   const { values, positionals } = parseArgs({
@@ -42,12 +36,12 @@ module.exports = function onboard(argv) {
   Usage:
     knowspace onboard <slug> [options]
 
-  Installs skills to the target OpenClaw, outputs workspace templates,
+  Installs skills to the engine, outputs workspace templates,
   and generates a portal access token.
 
   Options:
     --output, -o <dir>          Write templates to directory (default: print to stdout)
-    --skills-target <path>      OpenClaw skills directory (default: ~/.npm-global/lib/node_modules/openclaw/skills)
+    --skills-target <path>      Engine skills directory (default: auto-detected)
     --skip-skills               Skip skill installation
     --skip-token                Skip token generation
     --help, -h                  Show this help
@@ -55,7 +49,7 @@ module.exports = function onboard(argv) {
   Examples:
     knowspace onboard acme-corp
     knowspace onboard acme-corp --output ~/acme-corp/workspace
-    knowspace onboard acme-corp --skills-target /opt/openclaw/skills
+    knowspace onboard acme-corp --skills-target /opt/engine/skills
 `);
     return;
   }
@@ -92,7 +86,7 @@ module.exports = function onboard(argv) {
   const workspacePath = path.join(os.homedir(), slug, 'workspace');
   if (!fs.existsSync(workspacePath)) {
     console.log(`  \u26a0  Workspace not found at ${workspacePath}`);
-    console.log('     Create it via the OpenClaw main agent before the client can use the portal.\n');
+    console.log('     Create it via the main agent before the client can use the portal.\n');
   } else {
     console.log(`  Workspace: ${workspacePath}\n`);
   }
@@ -101,7 +95,7 @@ module.exports = function onboard(argv) {
 function installSkills(repoRoot, target) {
   if (!fs.existsSync(target)) {
     console.error(`\n  ERROR: Skills target directory not found: ${target}`);
-    console.error('  Is OpenClaw installed? Use --skills-target to specify the correct path.\n');
+    console.error('  Is the engine installed? Use --skills-target to specify the correct path.\n');
     process.exit(1);
   }
 
@@ -187,10 +181,11 @@ function generateToken(repoRoot, slug) {
   const auth = new AuthManager(tokensPath);
   const token = auth.generateToken(slug);
 
+  const baseUrl = process.env.KNOWSPACE_BASE_URL || 'http://localhost:3445';
   console.log(`  === Portal Token ===
 
   Client:  ${slug}
   Token:   ${token}
-  Link:    http://localhost:3445/?token=${token}
+  Link:    ${baseUrl}/auth?token=${token}
 `);
 }

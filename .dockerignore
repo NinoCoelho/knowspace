@@ -1,0 +1,7 @@
+node_modules
+data
+.git
+.tokens.json
+.device-keys.json
+*.md
+!README.md
