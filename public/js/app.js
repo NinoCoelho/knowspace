@@ -850,6 +850,23 @@ async function loadFile(file) {
       // Markdown
       if (typeof marked !== 'undefined') {
         vaultContent.innerHTML = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
+        // Add copy buttons to content blocks
+        vaultContent.querySelectorAll('.prose > p, .prose > pre, .prose > blockquote, .prose > ul, .prose > ol').forEach(block => {
+          const btn = document.createElement('button');
+          btn.className = 'copy-block-btn';
+          btn.innerHTML = '<i class="fas fa-copy"></i>';
+          btn.title = 'Copy';
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const text = block.innerText.replace(/\n?Copy$/, '').trim();
+            navigator.clipboard.writeText(text).then(() => {
+              btn.innerHTML = '<i class="fas fa-check"></i>';
+              setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i>'; }, 1500);
+            });
+          });
+          block.style.position = 'relative';
+          block.appendChild(btn);
+        });
       } else {
         vaultContent.innerHTML = `<pre>${content}</pre>`;
       }
