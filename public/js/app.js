@@ -170,7 +170,7 @@ function switchView(view) {
 // Connection status monitoring
 let connectionStatus = 'connecting';
 let typingTimeout = null;
-const TYPING_TIMEOUT_MS = 95000; // slightly longer than server's 90s
+const TYPING_TIMEOUT_MS = 30 * 60 * 1000 + 5000; // 30 min + 5s buffer (matches server)
 
 function updateConnectionStatus(status) {
   connectionStatus = status;
@@ -204,6 +204,18 @@ socket.on('connect', () => {
   console.log('Connected to server');
   updateConnectionStatus('connected');
   loadClientInfo();
+
+  // Preload vault file list for chat autocomplete
+  if (vaultFiles.length === 0) {
+    fetch(`/api/vault?token=${token}`).then(r => r.json()).then(data => {
+      if (vaultFiles.length === 0) {
+        vaultFiles = (data.files || []).filter(f => {
+          const ext = f.path.split('.').pop().toLowerCase();
+          return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+        });
+      }
+    }).catch(() => {});
+  }
 
   // Deep-link: /vault/path/to/file opens vault with that file selected
   const urlPath = window.location.pathname;
@@ -249,7 +261,6 @@ socket.on('typing', (data) => {
       showTypingIndicator(false);
       if (activeSessionKey) processingSessions.delete(activeSessionKey);
       renderSessionList();
-      addMessage('The agent did not respond in time. Please try again.', 'assistant');
     }, TYPING_TIMEOUT_MS);
   } else {
     clearTimeout(typingTimeout);
@@ -265,6 +276,19 @@ socket.on('agent:status', (data) => {
     renderSessionList();
   }
   showTypingIndicator(!!data.processing);
+});
+
+// Progress updates from server during long-running agent operations
+const STATUS_LABELS = {
+  thinking: 'Agent is thinking...',
+  executing: 'Agent is executing tools...',
+};
+
+socket.on('agent:progress', (data) => {
+  const statusEl = document.getElementById('typing-status-text');
+  if (statusEl && data.status) {
+    statusEl.textContent = STATUS_LABELS[data.status] || `Agent is ${data.status}...`;
+  }
 });
 
 let typingElapsedTimer = null;
@@ -301,7 +325,7 @@ function showTypingIndicator(show) {
           <span class="dot">●</span>
           <span class="dot">●</span>
         </div>
-        <span class="text-sm">Agent is thinking...</span>
+        <span class="text-sm" id="typing-status-text">Agent is thinking...</span>
         <span class="typing-elapsed" id="typing-elapsed"></span>
       </div>
       <style>
@@ -321,12 +345,30 @@ function showTypingIndicator(show) {
       const el = document.getElementById('typing-elapsed');
       if (!el) { clearInterval(typingElapsedTimer); return; }
       const secs = Math.floor((Date.now() - startTime) / 1000);
-      if (secs >= 5) el.textContent = `${secs}s`;
+      if (secs >= 5) {
+        const mins = Math.floor(secs / 60);
+        el.textContent = mins > 0 ? `${mins}m ${secs % 60}s` : `${secs}s`;
+      }
     }, 1000);
   } else if (!show && existing) {
     clearInterval(typingElapsedTimer);
     existing.remove();
   }
+}
+
+// Detect exec approval requests in message text
+// Matches patterns like: /approve abc123 allow-always
+// The approval ID is a hex string, and the message typically contains command details
+const APPROVAL_REGEX = /\/approve\s+([a-f0-9]+)\s+(allow-always|allow-once|deny)/g;
+
+function parseApprovalRequest(text) {
+  APPROVAL_REGEX.lastIndex = 0;
+  const matches = [];
+  let match;
+  while ((match = APPROVAL_REGEX.exec(text)) !== null) {
+    matches.push({ id: match[1], fullMatch: match[0] });
+  }
+  return matches;
 }
 
 function addMessage(content, role) {
@@ -339,15 +381,47 @@ function addMessage(content, role) {
   const text = typeof content === 'string' ? content : (content.text || '');
   const files = (typeof content === 'object' ? content.files : []) || [];
 
+  // Check if this is an approval request from the assistant
+  const approvals = (role === 'assistant') ? parseApprovalRequest(text) : [];
+
   let html = '';
-  if (role === 'assistant' && typeof marked !== 'undefined') {
+  if (approvals.length > 0) {
+    // Render approval card instead of raw text
+    // Extract context: everything except the /approve lines
+    let context = text;
+    for (const a of approvals) {
+      context = context.replace(a.fullMatch, '').trim();
+    }
+
+    // Try to extract command info from context
+    const contextHtml = context ? (typeof marked !== 'undefined' ? marked.parse(context) : escapeHtml(context)) : '';
+
+    for (const approval of approvals) {
+      html += `<div class="approval-card" data-approval-id="${approval.id}">
+        <div class="approval-header"><i class="fas fa-shield-alt"></i> Exec approval required</div>
+        ${contextHtml ? `<div class="approval-command">${contextHtml}</div>` : ''}
+        <div class="approval-actions">
+          <button class="approval-btn allow-always" data-decision="allow-always" data-id="${approval.id}">
+            <i class="fas fa-check-double"></i> Allow always
+          </button>
+          <button class="approval-btn allow-once" data-decision="allow-once" data-id="${approval.id}">
+            <i class="fas fa-check"></i> Allow once
+          </button>
+          <button class="approval-btn deny" data-decision="deny" data-id="${approval.id}">
+            <i class="fas fa-times"></i> Deny
+          </button>
+        </div>
+        <div class="approval-resolved"></div>
+      </div>`;
+    }
+  } else if (role === 'assistant' && typeof marked !== 'undefined') {
     html = marked.parse(text);
   } else {
     html = escapeHtml(text);
   }
 
   // Replace /vault/... paths with clickable links in assistant messages
-  if (role === 'assistant') {
+  if (role === 'assistant' && approvals.length === 0) {
     html = html.replace(/(?:\/?)vault\/([\w\/\-_.]+)/g, (match, filePath) => {
       // Skip directory paths (ending with /)
       if (filePath.endsWith('/')) return match;
@@ -417,15 +491,147 @@ function addMessage(content, role) {
     });
   });
 
+  // Wire up approval buttons
+  msgDiv.querySelectorAll('.approval-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const approvalId = btn.dataset.id;
+      const decision = btn.dataset.decision;
+      const card = btn.closest('.approval-card');
+
+      // Send the /approve command as a chat message
+      socket.emit('chat:message', {
+        message: `/approve ${approvalId} ${decision}`,
+        messageId: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
+        tempFiles: []
+      });
+
+      // Mark card as resolved
+      card.classList.add('resolved');
+      const labels = { 'allow-always': 'Allowed (always)', 'allow-once': 'Allowed (once)', 'deny': 'Denied' };
+      card.querySelector('.approval-resolved').textContent = labels[decision] || decision;
+
+      // Show typing since agent will continue
+      if (decision !== 'deny') {
+        showTypingIndicator(true);
+      }
+    });
+  });
+
   messagesDiv.appendChild(msgDiv);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
 sendButton.addEventListener('click', sendMessage);
+
+// Autocomplete state
+const autocompleteDropdown = document.getElementById('autocompleteDropdown');
+let autocompleteIndex = -1;
+let autocompleteMatches = [];
+
+function getHashQuery() {
+  const val = messageInput.value;
+  const cursor = messageInput.selectionStart;
+  const before = val.slice(0, cursor);
+  const hashIdx = before.lastIndexOf('#');
+  if (hashIdx === -1) return null;
+  // Must be start of input or preceded by a space
+  if (hashIdx > 0 && before[hashIdx - 1] !== ' ') return null;
+  const query = before.slice(hashIdx + 1);
+  // No spaces allowed in query (user moved on)
+  if (query.includes(' ')) return null;
+  return { query, start: hashIdx, end: cursor };
+}
+
+function renderAutocomplete() {
+  const hq = getHashQuery();
+  if (!hq || vaultFiles.length === 0) {
+    autocompleteDropdown.classList.add('hidden');
+    autocompleteMatches = [];
+    autocompleteIndex = -1;
+    return;
+  }
+  const q = hq.query.toLowerCase();
+  autocompleteMatches = vaultFiles
+    .filter(f => {
+      const name = f.path.split('/').pop().replace(/\.[^.]+$/, '').toLowerCase();
+      const path = f.path.toLowerCase();
+      return name.includes(q) || path.includes(q);
+    })
+    .slice(0, 8);
+
+  if (autocompleteMatches.length === 0) {
+    autocompleteDropdown.classList.add('hidden');
+    autocompleteIndex = -1;
+    return;
+  }
+
+  autocompleteIndex = Math.min(autocompleteIndex, autocompleteMatches.length - 1);
+  if (autocompleteIndex < 0) autocompleteIndex = 0;
+
+  autocompleteDropdown.innerHTML = autocompleteMatches.map((f, i) => {
+    const name = f.path.split('/').pop();
+    const dir = f.path.includes('/') ? f.path.split('/').slice(0, -1).join('/') + '/' : '';
+    return `<div class="autocomplete-item px-4 py-2 cursor-pointer text-sm flex items-center gap-2 ${i === autocompleteIndex ? 'active' : ''}" data-index="${i}" style="${i === autocompleteIndex ? 'background: var(--accent-primary); color: white;' : ''}">
+      <i class="fas fa-file-alt opacity-50 text-xs"></i>
+      <span>${dir ? '<span class="opacity-50">' + dir + '</span>' : ''}${name}</span>
+    </div>`;
+  }).join('');
+
+  autocompleteDropdown.classList.remove('hidden');
+}
+
+function selectAutocomplete(index) {
+  const hq = getHashQuery();
+  if (!hq || !autocompleteMatches[index]) return;
+  const file = autocompleteMatches[index];
+  const name = file.path.split('/').pop().replace(/\.[^.]+$/, '');
+  const val = messageInput.value;
+  messageInput.value = val.slice(0, hq.start) + '#' + name + ' ' + val.slice(hq.end);
+  messageInput.selectionStart = messageInput.selectionEnd = hq.start + name.length + 2;
+  autocompleteDropdown.classList.add('hidden');
+  autocompleteMatches = [];
+  autocompleteIndex = -1;
+  messageInput.focus();
+}
+
+messageInput.addEventListener('input', renderAutocomplete);
+
+messageInput.addEventListener('keydown', (e) => {
+  if (!autocompleteDropdown.classList.contains('hidden') && autocompleteMatches.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
+      renderAutocomplete();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      autocompleteIndex = (autocompleteIndex - 1 + autocompleteMatches.length) % autocompleteMatches.length;
+      renderAutocomplete();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      selectAutocomplete(autocompleteIndex);
+      return;
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      autocompleteDropdown.classList.add('hidden');
+      autocompleteMatches = [];
+      autocompleteIndex = -1;
+    }
+  }
+});
+
 messageInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
+    if (!autocompleteDropdown.classList.contains('hidden')) return;
     e.preventDefault();
     sendMessage();
+  }
+});
+
+autocompleteDropdown.addEventListener('mousedown', (e) => {
+  const item = e.target.closest('.autocomplete-item');
+  if (item) {
+    e.preventDefault();
+    selectAutocomplete(parseInt(item.dataset.index));
   }
 });
 
@@ -850,23 +1056,40 @@ async function loadFile(file) {
       // Markdown
       if (typeof marked !== 'undefined') {
         vaultContent.innerHTML = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
-        // Add copy buttons to content blocks
-        vaultContent.querySelectorAll('.prose > p, .prose > pre, .prose > blockquote, .prose > ul, .prose > ol').forEach(block => {
-          const btn = document.createElement('button');
-          btn.className = 'copy-block-btn';
-          btn.innerHTML = '<i class="fas fa-copy"></i>';
-          btn.title = 'Copy';
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const text = block.innerText.replace(/\n?Copy$/, '').trim();
-            navigator.clipboard.writeText(text).then(() => {
-              btn.innerHTML = '<i class="fas fa-check"></i>';
-              setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i>'; }, 1500);
+        // Add copy buttons to content blocks inside a container
+        function addCopyButtons(container) {
+          container.querySelectorAll('.prose > p, .prose > pre, .prose > blockquote, .prose > ul, .prose > ol').forEach(block => {
+            const btn = document.createElement('button');
+            btn.className = 'copy-block-btn';
+            btn.innerHTML = '<i class="fas fa-copy"></i>';
+            btn.title = 'Copy';
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const text = block.innerText.replace(/\n?Copy$/, '').trim();
+              navigator.clipboard.writeText(text).then(() => {
+                btn.innerHTML = '<i class="fas fa-check"></i>';
+                setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i>'; }, 1500);
+              });
             });
+            block.style.position = 'relative';
+            block.appendChild(btn);
           });
-          block.style.position = 'relative';
-          block.appendChild(btn);
-        });
+        }
+        // Enable interactive checkboxes in vault
+        let vaultRawContent = content;
+        function onVaultCheckboxToggle(idx) {
+          vaultRawContent = toggleMarkdownCheckbox(vaultRawContent, idx);
+          vaultContent.querySelector('.prose').innerHTML = marked.parse(vaultRawContent);
+          enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
+          addCopyButtons(vaultContent);
+          fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(file.path)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: vaultRawContent })
+          });
+        }
+        enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
+        addCopyButtons(vaultContent);
       } else {
         vaultContent.innerHTML = `<pre>${content}</pre>`;
       }
@@ -946,6 +1169,34 @@ uploadBtn.addEventListener('click', () => {
   
   input.click();
 });
+
+// Toggle the nth checkbox in markdown content (0-indexed)
+function toggleMarkdownCheckbox(markdown, checkboxIndex) {
+  const regex = /- \[([ xX])\]/g;
+  let count = 0;
+  return markdown.replace(regex, (match, state) => {
+    if (count++ === checkboxIndex) {
+      return state.trim() ? '- [ ]' : '- [x]';
+    }
+    return match;
+  });
+}
+
+// Enable interactive checkboxes inside a container, calling onChange(checkboxIndex, checked) on toggle
+function enableInteractiveCheckboxes(container, onChange) {
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach((cb, idx) => {
+    cb.disabled = false;
+    cb.style.cursor = 'pointer';
+    // Prevent drag from intercepting checkbox clicks (kanban cards are draggable)
+    cb.addEventListener('mousedown', (e) => e.stopPropagation());
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      onChange(idx, cb.checked);
+    });
+  });
+}
 
 // Vault edit & delete
 let vaultEditing = false;
@@ -1165,6 +1416,17 @@ function migrateCard(card) {
   return { id: card.id, title: card.title || 'Untitled', body };
 }
 
+function renderCardBody(body) {
+  let html = marked.parse(body);
+  // Fallback: if marked didn't render task list checkboxes (GFM issue),
+  // convert remaining literal [ ]/[x] in list items to actual checkbox inputs
+  html = html.replace(/<li>\s*\[([ xX])\]\s*/g, (match, state) => {
+    const checked = state.trim() ? ' checked' : '';
+    return `<li><input type="checkbox" disabled${checked}> `;
+  });
+  return html;
+}
+
 function renderCardContent(card) {
   const c = migrateCard(card);
   let html = '';
@@ -1172,7 +1434,7 @@ function renderCardContent(card) {
     html += `<div class="card-title">${escapeHtml(c.title)}</div>`;
   }
   if (c.body) {
-    html += `<div class="card-body">${marked.parse(c.body)}</div>`;
+    html += `<div class="card-body">${renderCardBody(c.body)}</div>`;
   }
   return html;
 }
@@ -1236,6 +1498,32 @@ function renderKanban() {
         e.stopPropagation();
         deleteCard(lane.id, btn.dataset.cardId);
       });
+    });
+
+    // Enable interactive checkboxes on kanban cards
+    column.querySelectorAll('.kanban-card').forEach(cardEl => {
+      const cardId = cardEl.dataset.cardId;
+      const card = lane.cards.find(c => c.id === cardId);
+      if (!card) return;
+      function onCardCheckboxToggle(idx) {
+        const migrated = migrateCard(card);
+        card.body = toggleMarkdownCheckbox(migrated.body, idx);
+        card.title = migrated.title;
+        delete card.items;
+        delete card.content;
+        const actionsDiv = cardEl.querySelector('.card-actions');
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = renderCardContent(card);
+        while (cardEl.firstChild && cardEl.firstChild !== actionsDiv) {
+          cardEl.removeChild(cardEl.firstChild);
+        }
+        while (tempDiv.firstChild) {
+          cardEl.insertBefore(tempDiv.firstChild, actionsDiv);
+        }
+        enableInteractiveCheckboxes(cardEl, onCardCheckboxToggle);
+        saveKanban();
+      }
+      enableInteractiveCheckboxes(cardEl, onCardCheckboxToggle);
     });
 
     // Drag and drop
@@ -1353,6 +1641,8 @@ socket.on('chat:history', (data) => {
   messagesDiv.innerHTML = '';
   if (data.messages && data.messages.length > 0) {
     data.messages.forEach(msg => {
+      // Hide user /approve commands — the approval card shows the decision
+      if (msg.role === 'user' && /^\/?approve\s+[a-f0-9]+\s/i.test(msg.content.trim())) return;
       addMessage(msg.content, msg.role);
     });
   }
@@ -1431,7 +1721,15 @@ function htmlToMarkdown(el) {
         md += '*' + htmlToMarkdown(node) + '*';
       } else if (tag === 'ul' || tag === 'ol') {
         node.querySelectorAll(':scope > li').forEach(li => {
-          md += '\n- ' + htmlToMarkdown(li).trim();
+          const cb = li.querySelector(':scope > input[type="checkbox"]');
+          if (cb) {
+            const text = Array.from(li.childNodes).filter(n => n !== cb && !(n.nodeName === 'UL' || n.nodeName === 'OL')).map(n => n.textContent).join('').replace(/\u00a0/g, '').trim();
+            md += '\n- [' + (cb.checked ? 'x' : ' ') + '] ' + text;
+            const nested = li.querySelector(':scope > ul, :scope > ol');
+            if (nested) md += htmlToMarkdown(nested);
+          } else {
+            md += '\n- ' + htmlToMarkdown(li).trim();
+          }
         });
       } else if (tag === 'label' && node.classList.contains('cb-item')) {
         const checked = node.querySelector('input[type="checkbox"]')?.checked;
@@ -1452,7 +1750,7 @@ function htmlToMarkdown(el) {
 function markdownToEditorHtml(md) {
   if (!md) return '';
   return md.split('\n').map(line => {
-    const cbMatch = line.match(/^- \[([ x])\] (.*)$/);
+    const cbMatch = line.match(/^\s*- \[([ xX])\]\s?(.*)$/);
     if (cbMatch) {
       const checked = cbMatch[1] === 'x' ? ' checked' : '';
       return `<div><label class="cb-item"><input type="checkbox"${checked}><span>${escapeHtml(cbMatch[2])}</span></label></div>`;

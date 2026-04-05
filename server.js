@@ -81,6 +81,20 @@ function extractMessageText(message) {
   return '';
 }
 
+// System/internal messages that should never appear in client chat
+const INTERNAL_MESSAGE_PATTERNS = [
+  /^An async command did not run\b/,
+  /\bExec denied\b.*\bapproval-timeout\b/,
+  /\bDo not run the command again\b/,
+  /\bDo not mention, summarize, or reuse output\b/,
+  /\bReply to the user in a helpful way\b/,
+  /\bdo not claim there is new command output\b/i,
+];
+
+function isInternalMessage(text) {
+  return INTERNAL_MESSAGE_PATTERNS.some(p => p.test(text));
+}
+
 function normalizeMessages(messages) {
   return (messages || [])
     .filter(m => (m.role === 'user' || m.role === 'assistant'))
@@ -92,7 +106,8 @@ function normalizeMessages(messages) {
       }
       return { role: m.role, content: text, timestamp: m.timestamp };
     })
-    .filter(m => m.content);
+    .filter(m => m.content)
+    .filter(m => !isInternalMessage(m.content));
 }
 
 async function loadGatewayHistory(sessionKey, limit = 50) {
@@ -114,7 +129,7 @@ async function listClientSessions(clientSlug, retries = 2) {
         includeDerivedTitles: true,
       });
       const prefix = `agent:${clientSlug}:`;
-      return (result.sessions || [])
+      const sessions = (result.sessions || [])
         .filter(s => s.key && s.key.startsWith(prefix))
         .map(s => ({
           key: s.key,
@@ -122,6 +137,19 @@ async function listClientSessions(clientSlug, retries = 2) {
           updatedAt: s.updatedAt,
           totalTokens: s.totalTokens,
         }));
+
+      // Filter out sessions whose .jsonl files no longer exist on disk
+      try {
+        const sessionsJsonPath = path.join(process.env.HOME || '/home/nino', '.openclaw', 'agents', clientSlug, 'sessions', 'sessions.json');
+        const sessionsData = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf8'));
+        return sessions.filter(s => {
+          const entry = sessionsData[s.key];
+          if (!entry || !entry.sessionFile) return true; // keep if we can't determine
+          return fs.existsSync(entry.sessionFile);
+        });
+      } catch {
+        return sessions; // fallback: return all if sessions.json is unreadable
+      }
     } catch (error) {
       if (attempt < retries) {
         console.log(`[gateway] Retrying sessions.list (attempt ${attempt + 2})...`);
@@ -481,24 +509,70 @@ io.on('connection', async (socket) => {
         sessionKey,
         message: messageText,
         deliver: true,
-        timeoutMs: 120000,
+        timeoutMs: 30 * 60 * 1000,
         idempotencyKey: crypto.randomUUID(),
       });
 
       // Poll for the assistant response (chat.send is async)
       const POLL_INTERVAL = 2000;
-      const MAX_POLLS = 45; // 90s max
+      const MAX_POLLS = 900; // 30 minutes (900 × 2s)
       let found = false;
+      let lastStatus = 'thinking';
 
       for (let i = 0; i < MAX_POLLS; i++) {
         await new Promise(r => setTimeout(r, POLL_INTERVAL));
 
-        const history = await loadGatewayHistory(sessionKey, 50);
-        if (history.length > msgCountBefore) {
-          // New messages appeared — find the latest assistant reply
-          const newMessages = history.slice(msgCountBefore);
-          const assistantReply = newMessages.filter(m => m.role === 'assistant').pop();
+        // Check if socket disconnected — stop polling
+        if (socket.disconnected) {
+          sessionProcessing.set(sessionKey, false);
+          found = true; // not really found, but don't send error to dead socket
+          break;
+        }
+
+        let rawHistory;
+        try {
+          const result = await gatewayRpc('chat.history', { sessionKey, limit: 50 });
+          rawHistory = result.messages || [];
+        } catch {
+          continue; // transient gateway error, keep polling
+        }
+
+        if (rawHistory.length > msgCountBefore) {
+          const newRaw = rawHistory.slice(msgCountBefore);
+
+          // Detect agent activity from raw messages to report progress
+          let currentStatus = 'thinking';
+          for (const m of newRaw) {
+            if (Array.isArray(m.content)) {
+              for (const block of m.content) {
+                if (block.type === 'tool_use') currentStatus = 'executing';
+                if (block.type === 'tool_result') currentStatus = 'thinking';
+              }
+            }
+          }
+
+          // Emit progress update if status changed
+          if (currentStatus !== lastStatus) {
+            lastStatus = currentStatus;
+            socket.emit('agent:progress', { status: currentStatus });
+          }
+
+          // Check for a final assistant reply (text content, not just tool use)
+          const normalizedNew = normalizeMessages(newRaw);
+          const assistantReply = normalizedNew.filter(m => m.role === 'assistant').pop();
+
           if (assistantReply) {
+            // Verify this is a real final reply, not an intermediate tool-calling message
+            const lastRaw = newRaw.filter(m => m.role === 'assistant').pop();
+            const hasToolUse = Array.isArray(lastRaw?.content) &&
+              lastRaw.content.some(b => b.type === 'tool_use');
+            const hasText = Array.isArray(lastRaw?.content)
+              ? lastRaw.content.some(b => b.type === 'text' && b.text.trim())
+              : typeof lastRaw?.content === 'string' && lastRaw.content.trim();
+
+            // If the last assistant message has tool_use, the agent is still working
+            if (hasToolUse && !hasText) continue;
+
             sessionProcessing.set(sessionKey, false);
             socket.emit('typing', { typing: false });
             socket.emit('chat:message', {
@@ -509,32 +583,14 @@ io.on('connection', async (socket) => {
             found = true;
             break;
           }
-          // Check if there's an error message in the new content
-          const errorMsg = newMessages.find(m =>
-            m.role === 'assistant' && (m.content.includes('rate limit') || m.content.includes('error'))
-          );
-          if (errorMsg) {
-            sessionProcessing.set(sessionKey, false);
-            socket.emit('typing', { typing: false });
-            socket.emit('chat:message', {
-              role: 'assistant',
-              content: errorMsg.content,
-              timestamp: new Date().toISOString(),
-            });
-            found = true;
-            break;
-          }
         }
       }
 
       if (!found) {
         sessionProcessing.set(sessionKey, false);
         socket.emit('typing', { typing: false });
-        socket.emit('chat:message', {
-          role: 'assistant',
-          content: 'The agent is taking too long to respond. Please try again.',
-          timestamp: new Date().toISOString(),
-        });
+        // After 30 minutes, the agent likely stalled — but don't fake an error message
+        console.log(`[chat] ${socket.clientSlug}: agent polling timed out after 30 min for ${sessionKey}`);
       }
 
       // Refresh session list (title may have been derived from first message)
