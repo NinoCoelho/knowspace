@@ -37,6 +37,7 @@ let pendingFiles = [];
 let sessions = [];
 let activeSessionKey = null;
 let pendingVaultOpen = null;
+const processingSessions = new Set();
 
 // DOM Elements
 const messagesDiv = document.getElementById('messages');
@@ -60,9 +61,10 @@ function renderSessionList() {
     const isActive = session.key === activeSessionKey && currentView === 'chat';
     const div = document.createElement('div');
     div.className = `session-item ${isActive ? 'active' : ''}`;
+    const isProcessing = processingSessions.has(session.key);
     div.innerHTML = `
-      <div class="session-name">${escapeHtml(session.label || 'Untitled')}</div>
-      <div class="session-date">${formatSessionDate(session.updatedAt)}</div>
+      <div class="session-name">${isProcessing ? '<span class="processing-badge" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;animation:pulse-badge 1.2s ease-in-out infinite;vertical-align:middle;"></span>' : ''}${escapeHtml(session.label || 'Untitled')}</div>
+      <div class="session-date">${isProcessing ? '<span style="color:#f59e0b;font-size:10px;">processing...</span>' : formatSessionDate(session.updatedAt)}</div>
       <div class="session-actions">
         <button class="session-action-btn rename-session" title="Rename">
           <i class="fas fa-pen"></i>
@@ -153,7 +155,12 @@ function switchView(view) {
   document.getElementById('sidebarKanban').classList.toggle('hidden', view !== 'kanban');
 
   // Update session list active highlight
-  if (view === 'chat') renderSessionList();
+  if (view === 'chat') {
+    renderSessionList();
+    // Re-check agent status and scroll to bottom
+    socket.emit('agent:status');
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
 
   // Load data for view
   if (view === 'vault') loadVault();
@@ -228,12 +235,20 @@ socket.on('chat:message', (data) => {
 });
 
 socket.on('typing', (data) => {
+  // Track which session is processing
+  if (activeSessionKey) {
+    if (data.typing) processingSessions.add(activeSessionKey);
+    else processingSessions.delete(activeSessionKey);
+    renderSessionList();
+  }
   showTypingIndicator(data.typing);
   if (data.typing) {
     // Safety net: if server never sends typing:false, auto-clear
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
       showTypingIndicator(false);
+      if (activeSessionKey) processingSessions.delete(activeSessionKey);
+      renderSessionList();
       addMessage('The agent did not respond in time. Please try again.', 'assistant');
     }, TYPING_TIMEOUT_MS);
   } else {
@@ -242,10 +257,36 @@ socket.on('typing', (data) => {
   }
 });
 
+// Check agent processing status (e.g. after reconnect or view switch)
+socket.on('agent:status', (data) => {
+  if (activeSessionKey) {
+    if (data.processing) processingSessions.add(activeSessionKey);
+    else processingSessions.delete(activeSessionKey);
+    renderSessionList();
+  }
+  showTypingIndicator(!!data.processing);
+});
+
 let typingElapsedTimer = null;
+
+function updateProcessingBadge(show) {
+  // Show/hide pulsing dot on chat nav items so user sees activity from any view
+  document.querySelectorAll('[data-view="chat"]').forEach(el => {
+    let badge = el.querySelector('.processing-badge');
+    if (show && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'processing-badge';
+      badge.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-left:4px;animation:pulse-badge 1.2s ease-in-out infinite;';
+      el.appendChild(badge);
+    } else if (!show && badge) {
+      badge.remove();
+    }
+  });
+}
 
 function showTypingIndicator(show) {
   const existing = document.getElementById('typing-indicator');
+  updateProcessingBadge(show);
 
   if (show && !existing) {
     const startTime = Date.now();
@@ -269,6 +310,7 @@ function showTypingIndicator(show) {
         .dot:nth-child(2) { animation-delay:0.2s; }
         .dot:nth-child(3) { animation-delay:0.4s; }
         @keyframes blink { 0%,80%,100%{opacity:0.3} 40%{opacity:1} }
+        @keyframes pulse-badge { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
       </style>
     `;
     messagesDiv.appendChild(typingDiv);
@@ -1123,7 +1165,7 @@ function renderKanban() {
 
   currentKanban.lanes.forEach(lane => {
     const column = document.createElement('div');
-    column.className = 'kanban-column flex-1 min-w-64 rounded-lg p-4';
+    column.className = 'kanban-column flex-1 min-w-64 rounded-lg p-4 min-h-0 overflow-hidden';
     column.dataset.laneId = lane.id;
 
     const cardsHtml = lane.cards.map((card, index) => {
@@ -1297,6 +1339,8 @@ socket.on('chat:history', (data) => {
       addMessage(msg.content, msg.role);
     });
   }
+  // Re-check if agent is still processing (indicator was cleared with innerHTML)
+  socket.emit('agent:status');
 });
 
 function formatFileSize(bytes) {

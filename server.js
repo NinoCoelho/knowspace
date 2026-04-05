@@ -343,6 +343,9 @@ io.use((socket, next) => {
   next();
 });
 
+// Track agent processing state per session key (survives socket reconnects)
+const sessionProcessing = new Map();
+
 io.on('connection', async (socket) => {
   console.log(`Client connected: ${socket.clientSlug}`);
 
@@ -436,6 +439,11 @@ io.on('connection', async (socket) => {
     }
   });
 
+  // --- Agent status check ---
+  socket.on('agent:status', () => {
+    socket.emit('agent:status', { processing: !!sessionProcessing.get(socket.activeSessionKey) });
+  });
+
   // --- Chat messaging via Gateway ---
 
   socket.on('chat:message', async (data) => {
@@ -448,6 +456,9 @@ io.on('connection', async (socket) => {
         await gatewayRpc('sessions.patch', { key: socket.activeSessionKey });
       }
 
+      const sessionKey = socket.activeSessionKey;
+      sessionProcessing.set(sessionKey, true);
+
       // Build message with temp file paths
       let messageText = data.message;
       if (data.tempFiles && data.tempFiles.length > 0) {
@@ -459,8 +470,6 @@ io.on('connection', async (socket) => {
           cleanupTempFiles(`${socket.clientSlug}-${data.messageId}`);
         });
       }
-
-      const sessionKey = socket.activeSessionKey;
       console.log(`[chat] ${socket.clientSlug}: sending to ${sessionKey}`);
 
       // Get message count before sending so we can detect the new reply
@@ -490,6 +499,7 @@ io.on('connection', async (socket) => {
           const newMessages = history.slice(msgCountBefore);
           const assistantReply = newMessages.filter(m => m.role === 'assistant').pop();
           if (assistantReply) {
+            sessionProcessing.set(sessionKey, false);
             socket.emit('typing', { typing: false });
             socket.emit('chat:message', {
               role: 'assistant',
@@ -504,6 +514,7 @@ io.on('connection', async (socket) => {
             m.role === 'assistant' && (m.content.includes('rate limit') || m.content.includes('error'))
           );
           if (errorMsg) {
+            sessionProcessing.set(sessionKey, false);
             socket.emit('typing', { typing: false });
             socket.emit('chat:message', {
               role: 'assistant',
@@ -517,6 +528,7 @@ io.on('connection', async (socket) => {
       }
 
       if (!found) {
+        sessionProcessing.set(sessionKey, false);
         socket.emit('typing', { typing: false });
         socket.emit('chat:message', {
           role: 'assistant',
@@ -531,6 +543,7 @@ io.on('connection', async (socket) => {
 
     } catch (error) {
       console.error(`[chat] ${socket.clientSlug}: ${error.message}`);
+      if (socket.activeSessionKey) sessionProcessing.set(socket.activeSessionKey, false);
       socket.emit('typing', { typing: false });
       socket.emit('chat:message', {
         role: 'assistant',
