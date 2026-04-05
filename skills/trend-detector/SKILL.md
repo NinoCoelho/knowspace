@@ -1,3 +1,21 @@
+---
+name: trend-detector
+description: Detects viral trends using multiple sources and delivers analysis to Telegram for manual review and content strategy planning.
+requires_env:
+  - key: TELEGRAM_BOT_TOKEN
+    description: Telegram bot token for delivering trend reports
+    required: true
+  - key: TELEGRAM_CHAT_ID
+    description: Default Telegram chat ID for delivery
+    required: false
+  - key: BUFFER_API_KEY
+    description: Buffer API for analyzing post performance
+    required: false
+  - key: PERPLEXITY_API_KEY
+    description: Perplexity API for real-time trend search
+    required: false
+---
+
 # Trend Detector Skill
 
 ## Description

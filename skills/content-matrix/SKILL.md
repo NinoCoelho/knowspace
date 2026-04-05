@@ -1,3 +1,26 @@
+---
+name: content-matrix
+description: Content Matrix v3.0 - CLI for automated content generation, curation, and distribution.
+requires_env:
+  - key: REPLICATE_API_TOKEN
+    description: Replicate API for image generation via Designer skill
+    required: false
+  - key: BUFFER_API_KEY
+    description: Buffer API for social media scheduling
+    required: false
+requires_skills:
+  - name: content-classifier
+    required: true
+  - name: ghostwriter-v3
+    required: true
+  - name: content-builder
+    required: true
+  - name: designer
+    required: false
+  - name: trend-detector
+    required: false
+---
+
 # content-matrix
 
 Content Matrix v3.0 - CLI for automated content generation, curation, and distribution.

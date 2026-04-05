@@ -1,6 +1,16 @@
 ---
 name: instagram-carousel
 description: Generate Instagram carousels and single posts with PAS framework (Problem-Agitation-Solution-CTA). Creates 4-5 image carousels with SEO-optimized captions and hashtags. Delivers content via Telegram for manual review before posting. Requires client configuration in {workspace}/vault/instagram-carousel/config.json for branding, CTAs, and hashtags.
+requires_env:
+  - key: REPLICATE_API_TOKEN
+    description: Replicate API for image generation via Designer skill
+    required: true
+  - key: GHOSTWRITER_PATH
+    description: Path to ghostwriter skill for authentic voice
+    required: false
+requires_skills:
+  - name: designer
+    required: true
 ---
 
 # Instagram Carousel Generator

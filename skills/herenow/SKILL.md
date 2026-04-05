@@ -1,6 +1,15 @@
 ---
 name: herenow
-description: Generate HTML pages and publish them to here.now for instant browser visualization. AUTOMATIC PUBLISHING (no asking): (1) User asks for "report", "relatório", "document", "documento", "summary", "resumo" → publish immediately and return link, (2) Multiple images/gallery → publish and return link, (3) Tables with >10 rows → publish and return link, (4) Content >500 words → publish and return link. ASK FIRST: When user doesn't specify format but content could benefit from browser view. Anonymous sites expire in 24h; authenticated sites are permanent.
+description: >
+  Generate HTML pages and publish them to here.now for instant browser visualization.
+  AUTOMATIC PUBLISHING (no asking): (1) User asks for report/document/summary, (2) Multiple
+  images/gallery, (3) Tables with >10 rows, (4) Content >500 words. ASK FIRST when user
+  doesn't specify format but content could benefit from browser view. Anonymous sites expire
+  in 24h; authenticated sites are permanent.
+requires_env:
+  - key: HERENOW_API_KEY
+    description: API key for here.now publishing service
+    required: false
 ---
 
 # Herenow - Publish HTML to here.now

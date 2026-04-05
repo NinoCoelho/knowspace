@@ -1,6 +1,16 @@
 ---
 name: linkedin_post
 description: Complete LinkedIn post generation with professional banners. Generates landscape banners (1200x627) + long-form copy (300-500 words) using PAS, Story-Result, or Insight-Value frameworks. Captions start with strong hook in first 2 lines, follow professional structure (paragraphs with data), end with clear CTA + LinkedIn hashtags. Use when creating LinkedIn posts with professional banners, data-driven long-form copy, and LinkedIn-optimized hashtags. Delivers to Telegram for manual review.
+requires_env:
+  - key: REPLICATE_API_TOKEN
+    description: Replicate API for banner generation via Designer skill
+    required: true
+  - key: GHOSTWRITER_PATH
+    description: Path to ghostwriter skill for authentic voice
+    required: false
+requires_skills:
+  - name: designer
+    required: true
 ---
 
 # LinkedIn Post Generator

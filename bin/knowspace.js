@@ -4,6 +4,7 @@ const path = require('path');
 
 const commands = {
   serve: '../cli/serve',
+  configure: '../cli/configure',
   onboard: '../cli/onboard',
   tokens: '../cli/tokens',
 };
@@ -19,7 +20,8 @@ if (!command || command === '--help' || command === '-h') {
 
   Commands:
     serve                       Start the portal server
-    onboard <slug>              Onboard client (install skills, generate templates & token)
+    configure                   Interactive setup (wizard or menu)
+    onboard <slug>              Legacy: onboard client (use 'configure' instead)
     tokens list                 List all client tokens
     tokens generate <slug>      Generate a new token
     tokens rotate <slug>        Rotate an existing token
