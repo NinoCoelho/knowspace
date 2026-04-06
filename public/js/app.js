@@ -144,6 +144,38 @@ if (typeof marked !== 'undefined') {
   });
 }
 
+// Wire relative links inside a rendered vault markdown container to open files in the vault viewer
+function wireVaultInternalLinks(container, filePath) {
+  const dir = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') : '';
+  container.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:')) return;
+    let resolved;
+    if (href.startsWith('/')) {
+      resolved = href.slice(1);
+    } else {
+      resolved = dir ? `${dir}/${href}` : href;
+      const parts = resolved.split('/');
+      const normalized = [];
+      for (const part of parts) {
+        if (part === '..') normalized.pop();
+        else if (part !== '.') normalized.push(part);
+      }
+      resolved = normalized.join('/');
+    }
+    a.setAttribute('href', 'javascript:void(0)');
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = vaultFiles.find(f => f.path === resolved || f.path === resolved + '.md');
+      if (target) {
+        loadFile(target);
+      } else {
+        loadVault(resolved);
+      }
+    });
+  });
+}
+
 // Navigation
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', (e) => {
@@ -1131,8 +1163,10 @@ async function loadFile(file) {
 
     vaultFileName.textContent = cleanName;
     document.getElementById('vaultActions').style.display = 'flex';
-    // Only show edit button for non-kanban text files
+    // Only show edit button for non-kanban text files (or when kanban is in md view mode)
     document.getElementById('vaultEditBtn').style.display = (isTextFile && !isKanbanFile) ? '' : 'none';
+    // Show toggle button only for kanban files
+    document.getElementById('vaultKanbanToggleBtn').style.display = isKanbanFile ? '' : 'none';
     // Show convert button only for .md files NOT in kanban/ folder
     document.getElementById('vaultConvertKanbanBtn').style.display = (ext === 'md' && !isKanbanFile) ? '' : 'none';
 
@@ -1150,14 +1184,10 @@ async function loadFile(file) {
       const data = await res.json();
       currentKanban = data.kanban || getDefaultKanban();
       currentKanbanFile = kanbanBasename;
-      vaultContent.innerHTML = '';
-      // Create an inline kanban container
-      const kanbanContainer = document.createElement('div');
-      kanbanContainer.className = 'flex h-full gap-4 overflow-x-auto pb-4 items-stretch';
-      kanbanContainer.style.minHeight = '400px';
-      vaultContent.style.overflow = 'auto';
-      vaultContent.appendChild(kanbanContainer);
-      renderKanban(kanbanContainer);
+      kanbanViewMode = 'kanban'; // reset to kanban view on file open
+      vaultEditing = false;
+      updateVaultKanbanToggleBtn();
+      renderKanbanFileView();
       return;
     }
 
@@ -1200,6 +1230,7 @@ async function loadFile(file) {
           vaultContent.querySelector('.prose').innerHTML = marked.parse(vaultRawContent);
           enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
           addCopyButtons(vaultContent);
+          wireVaultInternalLinks(vaultContent, file.path);
           fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(file.path)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -1208,6 +1239,7 @@ async function loadFile(file) {
         }
         enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
         addCopyButtons(vaultContent);
+        wireVaultInternalLinks(vaultContent, file.path);
       } else {
         vaultContent.innerHTML = `<pre>${content}</pre>`;
       }
@@ -1319,6 +1351,7 @@ function enableInteractiveCheckboxes(container, onChange) {
 // Vault edit & delete
 let vaultEditing = false;
 let vaultOriginalContent = '';
+let kanbanViewMode = 'kanban'; // 'kanban' | 'md'
 
 document.getElementById('vaultEditBtn').addEventListener('click', async () => {
   if (!currentFile) return;
@@ -1336,7 +1369,12 @@ document.getElementById('vaultEditBtn').addEventListener('click', async () => {
       });
     }
     vaultEditing = false;
-    loadFile(currentFile);
+    const isKanbanFileSave = currentFile && (currentFile.path.startsWith('kanban/') || currentFile.path.includes('/kanban/'));
+    if (isKanbanFileSave && kanbanViewMode === 'md') {
+      renderKanbanFileView();
+    } else {
+      loadFile(currentFile);
+    }
   } else {
     // Enter edit mode
     const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`);
@@ -1380,6 +1418,56 @@ function updateVaultEditBtn() {
     btn.title = 'Edit';
   }
 }
+
+function updateVaultKanbanToggleBtn() {
+  const btn = document.getElementById('vaultKanbanToggleBtn');
+  if (!btn) return;
+  if (kanbanViewMode === 'kanban') {
+    btn.innerHTML = '<i class="fas fa-file-alt"></i>';
+    btn.title = 'View as Markdown';
+  } else {
+    btn.innerHTML = '<i class="fas fa-columns"></i>';
+    btn.title = 'View as Kanban';
+  }
+}
+
+function renderKanbanFileView() {
+  vaultContent.innerHTML = '';
+  vaultEditing = false;
+  updateVaultEditBtn();
+  if (kanbanViewMode === 'kanban') {
+    const kanbanContainer = document.createElement('div');
+    kanbanContainer.className = 'flex h-full gap-4 overflow-x-auto pb-4 items-stretch';
+    kanbanContainer.style.minHeight = '400px';
+    vaultContent.style.overflow = 'auto';
+    vaultContent.appendChild(kanbanContainer);
+    renderKanban(kanbanContainer);
+    document.getElementById('vaultEditBtn').style.display = 'none';
+  } else {
+    // MD view: fetch raw file and render as markdown
+    vaultContent.style.overflow = '';
+    document.getElementById('vaultEditBtn').style.display = '';
+    updateVaultEditBtn();
+    fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`)
+      .then(r => r.text())
+      .then(content => {
+        if (typeof marked !== 'undefined') {
+          vaultContent.innerHTML = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
+          wireVaultInternalLinks(vaultContent, currentFile.path);
+        } else {
+          vaultContent.innerHTML = `<pre class="whitespace-pre-wrap text-sm">${escapeHtml(content)}</pre>`;
+        }
+      });
+  }
+}
+
+document.getElementById('vaultKanbanToggleBtn').addEventListener('click', () => {
+  if (!currentFile) return;
+  kanbanViewMode = kanbanViewMode === 'kanban' ? 'md' : 'kanban';
+  vaultEditing = false;
+  updateVaultKanbanToggleBtn();
+  renderKanbanFileView();
+});
 
 document.getElementById('vaultConvertKanbanBtn').addEventListener('click', async () => {
   if (!currentFile) return;
