@@ -14,18 +14,20 @@ knowspace configure            # interactive setup wizard / menu
 knowspace configure --reset    # force wizard again
 knowspace serve                # start the portal (default port 3445)
 knowspace serve --port 4000
-knowspace gateway install      # detect binary, write service file, start daemon
-knowspace gateway uninstall    # stop daemon and remove service file
-knowspace gateway start
-knowspace gateway stop
-knowspace gateway restart
-knowspace gateway status
+knowspace daemon install       # write service file, start on login
+knowspace daemon uninstall     # stop and remove service file
+knowspace daemon start
+knowspace daemon stop
+knowspace daemon restart
+knowspace daemon status
+knowspace daemon logs          # tail -f ~/.knowspace/knowspace.log
+knowspace daemon logs --error  # tail -f ~/.knowspace/knowspace.error.log
 knowspace tokens list
 knowspace tokens generate <slug>
 knowspace tokens rotate <slug>
 ```
 
-Gateway daemon backend: `launchd` on macOS, `systemd --user` on Linux.
+Daemon backend: `launchd` on macOS (`~/Library/LaunchAgents/com.knowspace.server.plist`), `systemd --user` on Linux (`~/.config/systemd/user/knowspace.service`). Logs at `~/.knowspace/knowspace.log`.
 
 ## Development
 
