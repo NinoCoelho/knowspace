@@ -493,13 +493,12 @@ function addMessage(content, role, timestamp) {
     html = escapeHtml(text);
   }
 
-  // Replace /vault/... paths with clickable links in assistant messages
+  // Append a small open-icon after vault paths in assistant messages (keeps original text intact)
   if (role === 'assistant' && approvals.length === 0) {
     html = html.replace(/(?:\/?)vault\/([\w\/\-_.]+)/g, (match, filePath) => {
       // Skip directory paths (ending with /)
       if (filePath.endsWith('/')) return match;
-      const name = filePath.split('/').pop().replace(/\.(md|markdown)$/, '');
-      return `<a class="vault-link" data-vault-path="${escapeHtml(filePath)}" href="javascript:void(0)"><i class="fas fa-file-alt"></i>${escapeHtml(name)}</a>`;
+      return `${match}<a class="vault-link" data-vault-path="${escapeHtml(filePath)}" href="javascript:void(0)" title="Abrir ${escapeHtml(filePath)}"><i class="fas fa-external-link-alt"></i></a>`;
     });
   }
 
