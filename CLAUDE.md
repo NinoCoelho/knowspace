@@ -14,7 +14,7 @@ knowspace configure            # interactive setup wizard / menu
 knowspace configure --reset    # force wizard again
 knowspace serve                # start the portal (default port 3445)
 knowspace serve --port 4000
-knowspace daemon install       # write service file, start on login
+knowspace daemon install       # write service file, enable auto-start, start now
 knowspace daemon uninstall     # stop and remove service file
 knowspace daemon start
 knowspace daemon stop
@@ -69,21 +69,25 @@ bin/knowspace.js             CLI entry point
 cli/
   connect.js                 Configure gateway + install knowspace-onboard skill
   configure/
-    wizard.js                First-run wizard (gateway -> vault -> token)
+    wizard.js                First-run wizard (gateway → vault → token)
     menu.js                  Subsequent-run menu
     gateway.js               OpenClaw gateway detection and config
-    vault.js                 Vault path configuration
+    vault.js                 Vault path configuration (main client only)
     skills.js                Skill install + AGENTS.md registration
     state.js                 ~/.knowspace/config.json read/write
     env.js                   ~/.knowspace/.env and ~/.openclaw/.env read/write
     prompts.js               readline-based interactive prompts
-  serve.js                   Start server
+  daemon.js                  Daemon lifecycle (install/uninstall/start/stop/restart/status/logs)
+  daemon/
+    launchd.js               macOS launchd backend
+    systemd.js               Linux systemd --user backend
+  serve.js                   Start server interactively
   tokens.js                  Token management
   onboard.js                 Legacy: creates workspace + token from CLI args
 skills/
   knowspace-onboard/         Agent skill: instructs agent how to onboard portal clients
     SKILL.md                 Skill instructions (no env vars required)
-templates/                   Workspace markdown templates (SOUL, USER, AGENTS, IDENTITY)
+templates/                   Workspace markdown templates (SOUL, USER, AGENTS, IDENTITY, MEMORY)
 tests/
   adapters/                  49 contract tests using node:test (no gateway needed)
 scripts/
@@ -113,7 +117,9 @@ scripts/
 2. If `config.slug === clientSlug` and `config.vaultPath` is set, uses that path
 3. Falls back to `~/<slug>/workspace/vault`
 
-This allows the vault to point to any directory (e.g., an iCloud/Obsidian folder).
+**Main client** — vault path is set manually via `knowspace configure` (step 2). Can point to any directory (e.g., iCloud, Obsidian vault). Stored in `~/.knowspace/config.json`.
+
+**Onboarded clients** — vault is always at `~/slug/workspace/vault`, created by the agent during onboarding via the `knowspace-onboard` skill. No manual configuration needed.
 
 ### Token Authentication
 

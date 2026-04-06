@@ -1,6 +1,6 @@
 # Knowspace
 
-A web portal sidecar for [OpenClaw](https://github.com/openclaw/openclaw) that gives small teams a simple browser interface for AI agent interactions. Adds chat history, a file vault, and a kanban board on top of an existing OpenClaw installation — no Docker, no database, no separate infrastructure.
+A web portal sidecar for [OpenClaw](https://github.com/openclaw/openclaw) that gives clients a simple browser interface for AI agent interactions. Adds chat history, a file vault, and a kanban board on top of an existing OpenClaw installation — no Docker, no database, no separate infrastructure.
 
 ```
 Browser → Knowspace Portal → Adapter Layer → OpenClaw Gateway
@@ -15,7 +15,7 @@ Browser → Knowspace Portal → Adapter Layer → OpenClaw Gateway
 ## Requirements
 
 - Node.js 22+
-- OpenClaw installed and running (`openclaw gateway`)
+- OpenClaw installed and running
 
 ## Installation
 
@@ -37,7 +37,7 @@ knowspace connect
 
 ### 2. Configure the portal
 
-Interactive wizard on first run (3 steps: gateway, vault path, access token). Opens a menu on subsequent runs.
+Interactive wizard on first run — sets the gateway, configures the `main` vault path, and generates the first access token. Opens a menu on subsequent runs.
 
 ```bash
 knowspace configure
@@ -45,9 +45,17 @@ knowspace configure
 
 ### 3. Start
 
+Run interactively:
+
 ```bash
 knowspace serve              # default port 3445
 knowspace serve --port 4000
+```
+
+Or install as a background daemon (auto-starts on login):
+
+```bash
+knowspace daemon install
 ```
 
 The portal is available at `http://localhost:3445`. The access link is printed on first boot.
@@ -59,10 +67,6 @@ The portal is available at `http://localhost:3445`. The access link is printed o
 ### `knowspace connect`
 
 Configures the OpenClaw connection and installs the onboard skill. Run once after installation, and again to reinstall the skill after updates.
-
-```bash
-knowspace connect
-```
 
 1. Reads `~/.openclaw/openclaw.json` to detect gateway URL and token
 2. Saves connection overrides to `~/.knowspace/.env` if needed
@@ -80,7 +84,7 @@ knowspace configure --reset    # force wizard again
 
 **Wizard steps:**
 1. **Gateway** — detects `~/.openclaw/openclaw.json`; confirm or enter an alternate path
-2. **Vault** — path to the client's files (default: `~/main/workspace/vault`)
+2. **Vault** — path to the `main` client's vault (default: `~/main/workspace/vault`; can point to iCloud, Obsidian, etc.)
 3. **Token** — generates the portal access link for slug `main`
 
 **Menu options** (subsequent runs): Gateway, Vault location, Skills, Access tokens, Environment keys, Workspace templates.
@@ -91,6 +95,21 @@ knowspace configure --reset    # force wizard again
 knowspace serve [--port 3445]
 ```
 
+### `knowspace daemon`
+
+Install and manage Knowspace as a system daemon. Uses `launchd` on macOS and `systemd --user` on Linux.
+
+```bash
+knowspace daemon install       # write service file, enable auto-start on login, start now
+knowspace daemon uninstall     # stop and remove service file
+knowspace daemon start
+knowspace daemon stop
+knowspace daemon restart
+knowspace daemon status        # show running status and PID
+knowspace daemon logs          # tail -f ~/.knowspace/knowspace.log
+knowspace daemon logs --error  # tail error log instead
+```
+
 ### `knowspace tokens`
 
 ```bash
@@ -98,6 +117,20 @@ knowspace tokens list
 knowspace tokens generate <slug>
 knowspace tokens rotate <slug>
 ```
+
+---
+
+## Vault Design
+
+There are two kinds of clients:
+
+**Main client (`main`)** — configured manually via `knowspace configure`. The vault path can be set to any directory (e.g., an iCloud or Obsidian folder). Stored in `~/.knowspace/config.json`.
+
+**Onboarded clients** — created by the agent via the `knowspace-onboard` skill. Their vault is always at `~/slug/workspace/vault`, created automatically during onboarding. To onboard a new client, ask your agent:
+
+> "Onboard a new client, slug: acme-corp"
+
+The agent will create the workspace, register the agent with OpenClaw, generate a portal access token, and return the login link.
 
 ---
 
@@ -113,21 +146,6 @@ Set in shell or `~/.knowspace/.env`:
 | `KNOWSPACE_BASE_URL` | Public URL (used in token links) | `http://localhost:<port>` |
 | `KNOWSPACE_ADMIN_SLUG` | Slug for the first-boot auto-generated token | `main` |
 | `KNOWSPACE_TOKENS_FILE` | Path to the tokens file | `.tokens.json` |
-
----
-
-## Onboarding Clients
-
-Install the `knowspace-onboard` skill via `knowspace connect`, then ask your agent:
-
-> "Onboard a new client, slug: acme-corp"
-
-The agent will:
-1. Create the workspace and vault at `~/acme-corp/workspace/`
-2. Register the agent with OpenClaw
-3. Generate a portal access token and return the login link
-
-Clients access the portal via browser — no app, no bot, no extra setup.
 
 ---
 
@@ -151,19 +169,31 @@ public/
   js/app.js                  Frontend (vanilla JS)
 bin/knowspace.js             CLI entry point
 cli/
-  connect.js                 Configure gateway + install skill
+  connect.js                 Configure gateway + install onboard skill
   configure/                 Interactive wizard and menu
-  serve.js                   Start server
+    wizard.js                First-run: gateway → vault → token
+    menu.js                  Subsequent-run menu
+    gateway.js               OpenClaw detection and config
+    vault.js                 Vault path configuration
+    skills.js                Skill install + AGENTS.md registration
+    state.js                 ~/.knowspace/config.json read/write
+    env.js                   ~/.knowspace/.env read/write
+    prompts.js               readline-based interactive prompts
+  daemon.js                  Daemon lifecycle management
+  daemon/
+    launchd.js               macOS launchd backend
+    systemd.js               Linux systemd --user backend
+  serve.js                   Start server interactively
   tokens.js                  Token management
 skills/
-  knowspace-onboard/         Agent skill for onboarding portal clients
-templates/                   Workspace markdown templates
-tests/adapters/              Contract tests (49) for the adapter layer
+  knowspace-onboard/         Agent skill: onboards portal clients
+templates/                   Workspace markdown templates (SOUL, USER, AGENTS, IDENTITY, MEMORY)
+tests/adapters/              49 contract tests for the adapter layer
 ```
 
 **Rule:** `server.js` never imports `lib/gateway.js` directly. All engine calls go through `adapters/engine/`.
 
-**Stack:** Node.js, Express, Socket.IO, Vanilla JS, Tailwind CSS (CDN), filesystem (no database).
+**Stack:** Node.js, Express, Socket.IO, Vanilla JS, filesystem (no database).
 
 ---
 
