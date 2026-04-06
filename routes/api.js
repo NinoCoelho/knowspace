@@ -2,13 +2,28 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const matter = require('gray-matter');
 const Fuse = require('fuse.js');
+
+const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
+
+function getVaultBase(clientSlug) {
+  try {
+    const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
+    if (config.vaultPath && config.slug === clientSlug) {
+      return config.vaultPath;
+    }
+  } catch {
+    // config not found or invalid — fall through
+  }
+  return path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+}
 
 // Get chat history
 router.get('/chat/history', (req, res) => {
   const clientSlug = req.clientSlug;
-  const historyPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'chat-history.json');
+  const historyPath = path.join(getVaultBase(clientSlug), 'chat-history.json');
   
   try {
     if (fs.existsSync(historyPath)) {
@@ -27,7 +42,7 @@ router.get('/chat/history', (req, res) => {
 // Get vault files for a client
 router.get('/vault', (req, res) => {
   const clientSlug = req.clientSlug;
-  const vaultPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const vaultPath = getVaultBase(clientSlug);
   
   const files = [];
   
@@ -53,7 +68,7 @@ router.get('/vault/file', (req, res) => {
     return res.status(400).json({ error: 'File path required' });
   }
 
-  const vaultBase = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const vaultBase = getVaultBase(clientSlug);
   const fullPath = path.resolve(vaultBase, filePath);
 
   // Prevent path traversal
@@ -89,7 +104,7 @@ router.put('/vault/file', (req, res) => {
 
   if (!filePath) return res.status(400).json({ error: 'File path required' });
 
-  const vaultBase = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const vaultBase = getVaultBase(clientSlug);
   const fullPath = path.resolve(vaultBase, filePath);
 
   if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
@@ -114,7 +129,7 @@ router.delete('/vault/file', (req, res) => {
 
   if (!filePath) return res.status(400).json({ error: 'File path required' });
 
-  const vaultBase = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const vaultBase = getVaultBase(clientSlug);
   const fullPath = path.resolve(vaultBase, filePath);
 
   if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
@@ -130,6 +145,37 @@ router.delete('/vault/file', (req, res) => {
   }
 });
 
+// Move vault file
+router.post('/vault/move', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const { from, to } = req.body;
+
+  if (!from || !to) return res.status(400).json({ error: 'from and to paths required' });
+
+  const vaultBase = getVaultBase(clientSlug);
+  const fullFrom = path.resolve(vaultBase, from);
+  const fullTo = path.resolve(vaultBase, to);
+
+  // Prevent path traversal
+  if (!fullFrom.startsWith(vaultBase + path.sep) && fullFrom !== vaultBase) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  if (!fullTo.startsWith(vaultBase + path.sep) && fullTo !== vaultBase) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    if (!fs.existsSync(fullFrom)) return res.status(404).json({ error: 'Source file not found' });
+    const destDir = path.dirname(fullTo);
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+    fs.renameSync(fullFrom, fullTo);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error moving file:', error);
+    res.status(500).json({ error: 'Failed to move file' });
+  }
+});
+
 // Search vault files
 router.get('/vault/search', (req, res) => {
   const clientSlug = req.clientSlug;
@@ -139,9 +185,9 @@ router.get('/vault/search', (req, res) => {
     return res.status(400).json({ error: 'Search query required' });
   }
   
-  const vaultPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault');
+  const vaultPath = getVaultBase(clientSlug);
   const files = [];
-  
+
   try {
     walkDirectory(vaultPath, '', files);
     
@@ -162,7 +208,7 @@ router.get('/vault/search', (req, res) => {
 // List kanban boards
 router.get('/kanban/list', (req, res) => {
   const clientSlug = req.clientSlug;
-  const kanbanDir = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban');
+  const kanbanDir = path.join(getVaultBase(clientSlug), 'kanban');
 
   try {
     if (!fs.existsSync(kanbanDir)) {
@@ -188,7 +234,7 @@ router.get('/kanban', (req, res) => {
   const clientSlug = req.clientSlug;
   const file = req.query.file || 'kanban.md';
   const safe = path.basename(file);
-  const kanbanPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban', safe);
+  const kanbanPath = path.join(getVaultBase(clientSlug), 'kanban', safe);
 
   try {
     if (fs.existsSync(kanbanPath)) {
@@ -211,7 +257,7 @@ router.post('/kanban', (req, res) => {
   const { kanban } = req.body;
   const file = req.query.file || 'kanban.md';
   const safe = path.basename(file);
-  const kanbanDir = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban');
+  const kanbanDir = path.join(getVaultBase(clientSlug), 'kanban');
   const kanbanPath = path.join(kanbanDir, safe);
 
   try {
@@ -231,7 +277,7 @@ router.delete('/kanban', (req, res) => {
   const file = req.query.file || '';
   const safe = path.basename(file);
   if (!safe) return res.status(400).json({ error: 'file required' });
-  const kanbanPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'kanban', safe);
+  const kanbanPath = path.join(getVaultBase(clientSlug), 'kanban', safe);
 
   try {
     if (fs.existsSync(kanbanPath)) fs.unlinkSync(kanbanPath);

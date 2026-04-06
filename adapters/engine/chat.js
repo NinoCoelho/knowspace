@@ -34,32 +34,41 @@ async function sendMessage(sessionKey, messageText, options = {}) {
 }
 
 /**
- * Poll for an assistant reply after sending a message.
+ * Poll for assistant replies after sending a message.
+ * Calls onMessage for each new final reply as it arrives, then keeps polling
+ * for additional messages until the agent is idle.
  *
  * @param {string} sessionKey
- * @param {number} msgCountBefore - message count before the send
+ * @param {number} msgCountBefore - normalized message count before the send
  * @param {object} options
  * @param {function} [options.onProgress] - called with 'thinking' or 'executing'
+ * @param {function} [options.onMessage]  - called with each new reply { role, content, timestamp }
  * @param {function} [options.isDisconnected] - returns true if client disconnected
- * @param {number} [options.pollIntervalMs=2000]
- * @param {number} [options.maxPolls=900]
- * @returns {{ found: boolean, reply: { role, content, timestamp } | null }}
+ * @param {number}   [options.pollIntervalMs=2000]
+ * @param {number}   [options.maxPolls=900]
+ * @param {number}   [options.idlePollsToStop=3] - consecutive idle polls after last message before stopping
+ * @returns {{ found: boolean, disconnected: boolean }}
  */
 async function pollForReply(sessionKey, msgCountBefore, options = {}) {
   const {
     onProgress,
+    onMessage,
     isDisconnected,
     pollIntervalMs = 2000,
     maxPolls = 900,
+    idlePollsToStop = 3,
   } = options;
 
   let lastStatus = 'thinking';
+  let lastSeenCount = msgCountBefore;
+  let found = false;
+  let idlePolls = 0;
 
   for (let i = 0; i < maxPolls; i++) {
     await new Promise(r => setTimeout(r, pollIntervalMs));
 
     if (isDisconnected && isDisconnected()) {
-      return { found: false, reply: null, disconnected: true };
+      return { found, disconnected: true };
     }
 
     let rawHistory;
@@ -70,38 +79,47 @@ async function pollForReply(sessionKey, msgCountBefore, options = {}) {
       continue; // transient gateway error, keep polling
     }
 
-    if (rawHistory.length > msgCountBefore) {
-      const newRaw = rawHistory.slice(msgCountBefore);
+    // Always compare normalized counts — msgCountBefore is derived from normalized history
+    const normalizedHistory = messages.normalizeMessages(rawHistory);
+    const currentStatus = messages.detectAgentStatus(rawHistory);
 
-      // Detect and report agent activity
-      const currentStatus = messages.detectAgentStatus(newRaw);
-      if (currentStatus !== lastStatus) {
-        lastStatus = currentStatus;
-        if (onProgress) onProgress(currentStatus);
+    if (currentStatus !== lastStatus) {
+      lastStatus = currentStatus;
+      if (onProgress) onProgress(currentStatus);
+    }
+
+    if (normalizedHistory.length > lastSeenCount) {
+      const newNormalized = normalizedHistory.slice(lastSeenCount);
+      const lastRaw = rawHistory.filter(m => m.role === 'assistant').pop();
+      const isIntermediate = messages.isIntermediateMessage(lastRaw);
+
+      // Emit each new final assistant message immediately
+      for (const msg of newNormalized) {
+        if (msg.role !== 'assistant') continue;
+        if (isIntermediate) continue; // last raw msg still has pending tool_use — don't emit yet
+        if (onMessage) onMessage({ role: 'assistant', content: msg.content, timestamp: msg.timestamp || new Date().toISOString() });
+        found = true;
       }
 
-      // Check for a final assistant reply
-      const normalizedNew = messages.normalizeMessages(newRaw);
-      const assistantReply = normalizedNew.filter(m => m.role === 'assistant').pop();
+      lastSeenCount = normalizedHistory.length;
+      idlePolls = 0;
+    } else {
+      // No new messages this poll
+      const lastRaw = rawHistory.filter(m => m.role === 'assistant').pop();
+      const agentStillWorking = messages.isIntermediateMessage(lastRaw) || currentStatus === 'executing';
 
-      if (assistantReply) {
-        // Verify this is a real final reply, not intermediate tool-calling
-        const lastRaw = newRaw.filter(m => m.role === 'assistant').pop();
-        if (messages.isIntermediateMessage(lastRaw)) continue;
-
-        return {
-          found: true,
-          reply: {
-            role: 'assistant',
-            content: assistantReply.content,
-            timestamp: assistantReply.timestamp || new Date().toISOString(),
-          },
-        };
+      if (!agentStillWorking) {
+        idlePolls++;
+        // Once we've seen at least one reply and the agent has been quiet for
+        // idlePollsToStop consecutive polls, consider it done.
+        if (found && idlePolls >= idlePollsToStop) break;
+      } else {
+        idlePolls = 0; // reset — agent is still doing tool work between messages
       }
     }
   }
 
-  return { found: false, reply: null, disconnected: false };
+  return { found, disconnected: false };
 }
 
 module.exports = {

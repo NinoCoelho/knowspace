@@ -3,11 +3,26 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const multer = require('multer');
 const cookieParser = require('cookie-parser');
 const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
 const engine = require('./adapters/engine');
+
+const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
+
+function getVaultBase(clientSlug) {
+  try {
+    const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
+    if (config.vaultPath && config.slug === clientSlug) {
+      return config.vaultPath;
+    }
+  } catch {
+    // config not found or invalid — fall through
+  }
+  return path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -72,7 +87,7 @@ function formatFileSize(bytes) {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const clientSlug = req.clientSlug;
-    const uploadPath = path.join(process.env.HOME || '/home/nino', clientSlug, 'workspace', 'vault', 'uploads');
+    const uploadPath = path.join(getVaultBase(clientSlug), 'uploads');
     
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
@@ -158,6 +173,17 @@ app.get('/api/chat/history', async (req, res) => {
   res.json({ messages: history });
 });
 
+// List all registered clients (admin only)
+app.get('/api/clients', (req, res) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '') || req.cookies.auth_token;
+  if (!token) return res.status(401).json({ error: 'Token required' });
+  const clientSlug = authManager.validateToken(token);
+  if (!clientSlug) return res.status(403).json({ error: 'Invalid token' });
+  const adminSlug = process.env.KNOWSPACE_ADMIN_SLUG || 'main';
+  if (clientSlug !== adminSlug) return res.status(403).json({ error: 'Admin only' });
+  res.json(authManager.listTokens());
+});
+
 // API Routes with token auth
 app.use('/api', (req, res, next) => {
   const token = req.query.token || req.headers.authorization?.replace('Bearer ', '') || req.cookies.auth_token;
@@ -172,7 +198,13 @@ app.use('/api', (req, res, next) => {
     return res.status(403).json({ error: 'Invalid token' });
   }
 
-  req.clientSlug = clientSlug;
+  // Admin can impersonate another client via ?as=slug
+  const adminSlug = process.env.KNOWSPACE_ADMIN_SLUG || 'main';
+  if (req.query.as && clientSlug === adminSlug) {
+    req.clientSlug = req.query.as;
+  } else {
+    req.clientSlug = clientSlug;
+  }
   next();
 }, apiRoutes);
 
@@ -274,6 +306,7 @@ io.use((socket, next) => {
   }
 
   socket.clientSlug = clientSlug;
+  socket.originalSlug = clientSlug; // immutable — used for admin checks
   next();
 });
 
@@ -371,6 +404,35 @@ io.on('connection', async (socket) => {
     }
   });
 
+  // --- Client switching (admin only) ---
+  socket.on('client:switch', async (data) => {
+    const adminSlug = process.env.KNOWSPACE_ADMIN_SLUG || 'main';
+    if (socket.originalSlug !== adminSlug) return;
+
+    const targetSlug = data.clientSlug;
+    if (!targetSlug) return;
+
+    socket.clientSlug = targetSlug;
+    socket.activeSessionKey = null;
+
+    try {
+      const sessions = await engine.sessions.listSessions(targetSlug);
+      socket.emit('sessions:list', { sessions });
+
+      if (sessions.length > 0) {
+        socket.activeSessionKey = sessions[0].key;
+        const history = await engine.chat.loadHistory(sessions[0].key);
+        socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
+      } else {
+        socket.emit('chat:history', { messages: [], sessionKey: null });
+      }
+
+      socket.emit('client:switched', { clientSlug: targetSlug });
+    } catch (error) {
+      console.error('client:switch error:', error.message);
+    }
+  });
+
   // --- Agent status check ---
   socket.on('agent:status', () => {
     socket.emit('agent:status', { processing: !!sessionProcessing.get(socket.activeSessionKey) });
@@ -410,21 +472,22 @@ io.on('connection', async (socket) => {
       // Send via the engine adapter
       await engine.chat.sendMessage(sessionKey, messageText);
 
-      // Poll for the assistant response
+      // Poll for the assistant response — emits each reply immediately via onMessage
       const result = await engine.chat.pollForReply(sessionKey, msgCountBefore, {
         onProgress: (status) => socket.emit('agent:progress', { status }),
+        onMessage: (reply) => socket.emit('chat:message', reply),
         isDisconnected: () => socket.disconnected,
       });
 
+      sessionProcessing.set(sessionKey, false);
+
       if (result.disconnected) {
-        sessionProcessing.set(sessionKey, false);
-      } else if (result.found && result.reply) {
-        sessionProcessing.set(sessionKey, false);
-        socket.emit('typing', { typing: false });
-        socket.emit('chat:message', result.reply);
-      } else {
-        sessionProcessing.set(sessionKey, false);
-        socket.emit('typing', { typing: false });
+        return; // client gone, skip cleanup emits
+      }
+
+      socket.emit('typing', { typing: false });
+
+      if (!result.found) {
         console.log(`[chat] ${socket.clientSlug}: agent polling timed out after 30 min for ${sessionKey}`);
       }
 

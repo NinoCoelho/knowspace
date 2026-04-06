@@ -6,12 +6,7 @@ const AuthManager = require('../middleware/auth');
 const enginePaths = require('../adapters/engine/paths');
 
 const SKILLS = [
-  'client-onboard',
-  'instagram-carousel',
-  'content-matrix',
-  'trend-detector',
-  'linkedin_post',
-  'herenow',
+  'knowspace-onboard',
 ];
 
 const DEFAULT_SKILLS_TARGET = enginePaths.getSkillsTargetPath();
@@ -147,10 +142,11 @@ function renderTemplate(content, vars) {
 }
 
 function writeTemplates(repoRoot, outputDir, vars) {
-  const templatesDir = path.join(repoRoot, 'templates');
+  const templatesDir = path.join(repoRoot, 'templates', 'client');
   const files = fs.readdirSync(templatesDir).filter((f) => f.endsWith('.md'));
 
   fs.mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(path.join(outputDir, 'vault'), { recursive: true });
 
   console.log(`  Writing templates to ${outputDir}:\n`);
   for (const file of files) {
@@ -159,6 +155,7 @@ function writeTemplates(repoRoot, outputDir, vars) {
     fs.writeFileSync(path.join(outputDir, file), rendered);
     console.log(`    OK    ${file}`);
   }
+  console.log(`    OK    vault/`);
   console.log();
 }
 

@@ -33,11 +33,20 @@ let currentView = 'chat';
 let vaultFiles = [];
 let currentKanban = null;
 let clientSlug = null;
+let activeClientSlug = null; // null = own slug, set when admin switches to another client
+let isAdmin = false;
 let pendingFiles = [];
 let sessions = [];
 let activeSessionKey = null;
 let pendingVaultOpen = null;
 const processingSessions = new Set();
+let renderedMessageCount = 0; // tracks how many messages are currently displayed
+let backgroundPollTimer = null;
+
+// Append ?as=<slug> to API calls when admin has switched to another client
+function asParam() {
+  return activeClientSlug ? `&as=${activeClientSlug}` : '';
+}
 
 // DOM Elements
 const messagesDiv = document.getElementById('messages');
@@ -57,7 +66,10 @@ const newSessionBtn = document.getElementById('newSessionBtn');
 
 function renderSessionList() {
   sessionList.innerHTML = '';
-  sessions.forEach(session => {
+
+  const portalSessions = sessions.filter(s => !s.isSubagent);
+
+  portalSessions.forEach(session => {
     const isActive = session.key === activeSessionKey && currentView === 'chat';
     const div = document.createElement('div');
     div.className = `session-item ${isActive ? 'active' : ''}`;
@@ -119,6 +131,11 @@ socket.on('sessions:list', (data) => {
   renderSessionList();
 });
 
+socket.on('client:switched', (data) => {
+  // Reload the active view for the new client context
+  if (currentView === 'vault') loadVault();
+});
+
 // Configure marked
 if (typeof marked !== 'undefined') {
   marked.setOptions({
@@ -147,12 +164,10 @@ function switchView(view) {
   // Show/hide main content views
   document.getElementById('chatView').classList.toggle('hidden', view !== 'chat');
   document.getElementById('vaultView').classList.toggle('hidden', view !== 'vault');
-  document.getElementById('kanbanView').classList.toggle('hidden', view !== 'kanban');
 
   // Show/hide sidebar panels
   document.getElementById('sidebarChat').classList.toggle('hidden', view !== 'chat');
   document.getElementById('sidebarVault').classList.toggle('hidden', view !== 'vault');
-  document.getElementById('sidebarKanban').classList.toggle('hidden', view !== 'kanban');
 
   // Update session list active highlight
   if (view === 'chat') {
@@ -164,7 +179,6 @@ function switchView(view) {
 
   // Load data for view
   if (view === 'vault') loadVault();
-  if (view === 'kanban') { loadKanbanList(); loadKanban(); }
 }
 
 // Connection status monitoring
@@ -207,7 +221,7 @@ socket.on('connect', () => {
 
   // Preload vault file list for chat autocomplete
   if (vaultFiles.length === 0) {
-    fetch(`/api/vault?token=${token}`).then(r => r.json()).then(data => {
+    fetch(`/api/vault?token=${token}${asParam()}`).then(r => r.json()).then(data => {
       if (vaultFiles.length === 0) {
         vaultFiles = (data.files || []).filter(f => {
           const ext = f.path.split('.').pop().toLowerCase();
@@ -243,7 +257,7 @@ socket.on('chat:message', (data) => {
   // Clear typing timeout since we got a response
   clearTimeout(typingTimeout);
   typingTimeout = null;
-  addMessage(data.content, data.role);
+  addMessage(data.content, data.role, data.timestamp);
 });
 
 socket.on('typing', (data) => {
@@ -265,6 +279,7 @@ socket.on('typing', (data) => {
   } else {
     clearTimeout(typingTimeout);
     typingTimeout = null;
+
   }
 });
 
@@ -371,14 +386,32 @@ function parseApprovalRequest(text) {
   return matches;
 }
 
-function addMessage(content, role) {
+function addMessage(content, role, timestamp) {
   // Remove typing indicator if present
   showTypingIndicator(false);
+
+  const text = typeof content === 'string' ? content : (content.text || '');
+
+  // OpenClaw runtime context messages — render as a compact separator instead
+  if (role === 'assistant' && text.startsWith('OpenClaw runtime context (internal):')) {
+    const taskMatch = text.match(/task:\s*([\w-]+)/);
+    const statusMatch = text.match(/status:\s*([\w\s]+?)(?:\s+Result|\s+Stats|\s*$)/);
+    const task = taskMatch ? taskMatch[1] : 'subagent';
+    const status = statusMatch ? statusMatch[1].trim() : '';
+    const isOk = /complet|success|done/i.test(status);
+    const statusClass = isOk ? 'status-ok' : 'status-err';
+    const icon = isOk ? '✓' : '✕';
+    const el = document.createElement('div');
+    el.className = 'subagent-event';
+    el.innerHTML = `<span class="subagent-label"><span class="${statusClass}">${icon}</span> ${escapeHtml(task)}${status ? ` · ${escapeHtml(status)}` : ''}</span>`;
+    messagesDiv.appendChild(el);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    return;
+  }
 
   const msgDiv = document.createElement('div');
   msgDiv.className = `message ${role}`;
 
-  const text = typeof content === 'string' ? content : (content.text || '');
   const files = (typeof content === 'object' ? content.files : []) || [];
 
   // Check if this is an approval request from the assistant
@@ -444,6 +477,7 @@ function addMessage(content, role) {
   }
 
   msgDiv.innerHTML = html;
+
 
   // Action buttons (copy + download) on all messages with text
   if (text) {
@@ -517,6 +551,37 @@ function addMessage(content, role) {
     });
   });
 
+  // Timestamp + reply row
+  if (text) {
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+
+    if (timestamp) {
+      const ts = document.createElement('span');
+      ts.className = 'msg-timestamp';
+      const d = new Date(timestamp);
+      ts.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      ts.title = d.toLocaleString();
+      meta.appendChild(ts);
+    }
+
+    const replyBtn = document.createElement('button');
+    replyBtn.className = 'msg-action-btn msg-reply-btn';
+    replyBtn.title = 'Reply';
+    replyBtn.innerHTML = '<i class="fas fa-reply"></i>';
+    replyBtn.addEventListener('click', () => {
+      const lines = text.split('\n').slice(0, 3).map(l => '> ' + l).join('\n');
+      const quote = lines + (text.split('\n').length > 3 ? '\n> …' : '');
+      messageInput.value = quote + '\n\n' + messageInput.value;
+      messageInput.focus();
+      messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+    });
+    meta.appendChild(replyBtn);
+
+    msgDiv.appendChild(meta);
+  }
+
+  renderedMessageCount++;
   messagesDiv.appendChild(msgDiv);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
@@ -730,7 +795,7 @@ function sendMessage() {
     text: message,
     files: pendingFiles.map(f => ({ name: f.name, size: f.size }))
   };
-  addMessage(messageData, 'user');
+  addMessage(messageData, 'user', new Date().toISOString());
 
   // Send to agent with temp file paths
   socket.emit('chat:message', {
@@ -745,13 +810,41 @@ function sendMessage() {
   renderFilePreview();
 }
 
+function slugLabel(slug) {
+  return slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
+}
+
 // Client info
 async function loadClientInfo() {
   try {
     const res = await fetch(`/api/client?token=${token}`);
     const data = await res.json();
     clientSlug = data.clientSlug;
-    clientName.textContent = clientSlug.charAt(0).toUpperCase() + clientSlug.slice(1).replace(/-/g, ' ');
+    clientName.textContent = slugLabel(clientSlug);
+
+    // Try to load client list (admin only — will 403 for regular clients)
+    const clientsRes = await fetch(`/api/clients?token=${token}`);
+    if (clientsRes.ok) {
+      const clients = await clientsRes.json();
+      if (clients.length > 1) {
+        isAdmin = true;
+        const switcher = document.getElementById('clientSwitcher');
+        const select = document.getElementById('clientSelect');
+        select.innerHTML = clients.map(c =>
+          `<option value="${c.clientSlug}">${slugLabel(c.clientSlug)}</option>`
+        ).join('');
+        select.value = clientSlug;
+        switcher.style.display = 'block';
+
+        select.addEventListener('change', () => {
+          const target = select.value;
+          if (target === (activeClientSlug || clientSlug)) return;
+          activeClientSlug = target === clientSlug ? null : target;
+          clientName.textContent = slugLabel(target);
+          socket.emit('client:switch', { clientSlug: target });
+        });
+      }
+    }
   } catch (error) {
     console.error('Failed to load client info:', error);
   }
@@ -762,7 +855,7 @@ let currentFile = null;
 
 async function loadVault(autoOpenPath) {
   try {
-    const res = await fetch(`/api/vault?token=${token}`);
+    const res = await fetch(`/api/vault?token=${token}${asParam()}`);
     const data = await res.json();
 
     vaultFiles = (data.files || []).filter(f => {
@@ -921,7 +1014,7 @@ async function openVaultPreview(filePath) {
   // Fetch vault file list if not loaded
   if (vaultFiles.length === 0) {
     try {
-      const res = await fetch(`/api/vault?token=${token}`);
+      const res = await fetch(`/api/vault?token=${token}${asParam()}`);
       const data = await res.json();
       vaultFiles = (data.files || []).filter(f => {
         const ext = f.path.split('.').pop().toLowerCase();
@@ -947,11 +1040,11 @@ async function openVaultPreview(filePath) {
   }
 
   try {
-    const res = await fetch(`/api/vault/file?token=${token}&path=${file.path}`);
+    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${file.path}`);
     const content = await res.text();
     const ext = file.path.split('.').pop().toLowerCase();
     const cleanName = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
-    const fileUrl = `/api/vault/file?token=${token}&path=${file.path}`;
+    const fileUrl = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
 
     // Build modal
     const overlay = document.createElement('div');
@@ -1027,17 +1120,21 @@ async function loadFile(file) {
     vaultEditing = false;
     updateVaultEditBtn();
 
-    const res = await fetch(`/api/vault/file?token=${token}&path=${file.path}`);
-    const content = await res.text();
-
     const ext = file.path.split('.').pop().toLowerCase();
     const cleanName = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
     const isTextFile = ['md', 'markdown', 'txt', 'json', 'csv'].includes(ext);
 
+    // Detect kanban files (in kanban/ folder)
+    const isKanbanFile = ext === 'md' && (
+      file.path.startsWith('kanban/') || file.path.includes('/kanban/')
+    );
+
     vaultFileName.textContent = cleanName;
     document.getElementById('vaultActions').style.display = 'flex';
-    // Only show edit button for text files
-    document.getElementById('vaultEditBtn').style.display = isTextFile ? '' : 'none';
+    // Only show edit button for non-kanban text files
+    document.getElementById('vaultEditBtn').style.display = (isTextFile && !isKanbanFile) ? '' : 'none';
+    // Show convert button only for .md files NOT in kanban/ folder
+    document.getElementById('vaultConvertKanbanBtn').style.display = (ext === 'md' && !isKanbanFile) ? '' : 'none';
 
     currentFile = file;
 
@@ -1046,11 +1143,32 @@ async function loadFile(file) {
       el.classList.toggle('active', el.dataset.filePath === file.path);
     });
 
+    // Kanban files: fetch from /api/kanban and render inline
+    if (isKanbanFile) {
+      const kanbanBasename = file.path.split('/').pop();
+      const res = await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(kanbanBasename)}`);
+      const data = await res.json();
+      currentKanban = data.kanban || getDefaultKanban();
+      currentKanbanFile = kanbanBasename;
+      vaultContent.innerHTML = '';
+      // Create an inline kanban container
+      const kanbanContainer = document.createElement('div');
+      kanbanContainer.className = 'flex h-full gap-4 overflow-x-auto pb-4 items-stretch';
+      kanbanContainer.style.minHeight = '400px';
+      vaultContent.style.overflow = 'auto';
+      vaultContent.appendChild(kanbanContainer);
+      renderKanban(kanbanContainer);
+      return;
+    }
+
+    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${file.path}`);
+    const content = await res.text();
+
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-      const imagePath = `/api/vault/file?token=${token}&path=${file.path}`;
+      const imagePath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
       vaultContent.innerHTML = `<img src="${imagePath}" alt="${cleanName}" class="max-w-full rounded-lg">`;
     } else if (['mp4', 'webm', 'mov'].includes(ext)) {
-      const videoPath = `/api/vault/file?token=${token}&path=${file.path}`;
+      const videoPath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
       vaultContent.innerHTML = `<video src="${videoPath}" controls class="max-w-full rounded-lg"></video>`;
     } else {
       // Markdown
@@ -1082,7 +1200,7 @@ async function loadFile(file) {
           vaultContent.querySelector('.prose').innerHTML = marked.parse(vaultRawContent);
           enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
           addCopyButtons(vaultContent);
-          fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(file.path)}`, {
+          fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(file.path)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: vaultRawContent })
@@ -1150,7 +1268,7 @@ uploadBtn.addEventListener('click', () => {
     formData.append('file', file);
     
     try {
-      const res = await fetch(`/api/vault/upload?token=${token}`, {
+      const res = await fetch(`/api/vault/upload?token=${token}${asParam()}`, {
         method: 'POST',
         body: formData
       });
@@ -1211,7 +1329,7 @@ document.getElementById('vaultEditBtn').addEventListener('click', async () => {
     // Save
     const textarea = document.querySelector('.vault-editor');
     if (textarea) {
-      await fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(currentFile.path)}`, {
+      await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: textarea.value })
@@ -1221,7 +1339,7 @@ document.getElementById('vaultEditBtn').addEventListener('click', async () => {
     loadFile(currentFile);
   } else {
     // Enter edit mode
-    const res = await fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(currentFile.path)}`);
+    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`);
     vaultOriginalContent = await res.text();
     vaultEditing = true;
 
@@ -1240,7 +1358,7 @@ document.getElementById('vaultDeleteBtn').addEventListener('click', async () => 
   if (!currentFile) return;
   if (!confirm(`Delete "${currentFile.path}"?`)) return;
 
-  await fetch(`/api/vault/file?token=${token}&path=${encodeURIComponent(currentFile.path)}`, {
+  await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`, {
     method: 'DELETE'
   });
 
@@ -1263,13 +1381,110 @@ function updateVaultEditBtn() {
   }
 }
 
+document.getElementById('vaultConvertKanbanBtn').addEventListener('click', async () => {
+  if (!currentFile) return;
+  const ext = currentFile.path.split('.').pop().toLowerCase();
+  if (ext !== 'md') return;
+
+  // Fetch current content
+  let content = '';
+  try {
+    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`);
+    content = await res.text();
+  } catch (e) {
+    alert('Could not read file.');
+    return;
+  }
+
+  // Parse markdown into kanban: ## Heading → lane, - item / * item → card
+  const lines = content.split('\n');
+  const kanban = { title: currentFile.path.split('/').pop().replace(/\.md$/, ''), lanes: [] };
+  let currentLane = null;
+  lines.forEach(line => {
+    if (/^## /.test(line)) {
+      currentLane = { id: line.replace(/^## /, '').trim().toLowerCase().replace(/\s+/g, '-'), title: line.replace(/^## /, '').trim(), cards: [] };
+      kanban.lanes.push(currentLane);
+    } else if (/^[*-] /.test(line) && currentLane) {
+      const title = line.replace(/^[*-] /, '').trim();
+      if (title) currentLane.cards.push({ id: Date.now().toString() + Math.random(), title, body: '' });
+    } else if (/^# /.test(line) && !/^##/.test(line)) {
+      kanban.title = line.replace(/^# /, '').trim();
+    }
+  });
+
+  if (kanban.lanes.length === 0) {
+    kanban.lanes = [
+      { id: 'todo', title: 'To Do', cards: [] },
+      { id: 'in-progress', title: 'In Progress', cards: [] },
+      { id: 'done', title: 'Done', cards: [] }
+    ];
+  }
+
+  // Save as kanban file with same basename
+  const basename = currentFile.path.split('/').pop();
+  try {
+    await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(basename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kanban })
+    });
+  } catch (e) {
+    alert('Could not save kanban.');
+    return;
+  }
+
+  // Reload vault to pick up new kanban file in kanban/ folder
+  loadVault();
+});
+
+document.getElementById('vaultMoveBtn').addEventListener('click', async () => {
+  if (!currentFile) return;
+
+  // Gather unique folders from vault files
+  const folders = [...new Set(
+    vaultFiles
+      .map(f => f.path.includes('/') ? f.path.split('/').slice(0, -1).join('/') : '')
+      .filter(Boolean)
+  )].sort();
+
+  const folderList = folders.length ? folders.join('\n') : '(root)';
+  const dest = prompt(`Move "${currentFile.path.split('/').pop()}" to folder:\nAvailable folders:\n${folderList}\n\nEnter folder path (leave empty for root):`);
+  if (dest === null) return; // cancelled
+
+  const filename = currentFile.path.split('/').pop();
+  const toPath = dest.trim() ? dest.trim().replace(/\/$/, '') + '/' + filename : filename;
+
+  if (toPath === currentFile.path) return;
+
+  try {
+    const res = await fetch(`/api/vault/move?token=${token}${asParam()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: currentFile.path, to: toPath })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert('Move failed: ' + (err.error || 'Unknown error'));
+      return;
+    }
+    currentFile = null;
+    document.getElementById('vaultFileName').textContent = 'Select a file';
+    document.getElementById('vaultContent').innerHTML = '';
+    document.getElementById('vaultActions').style.display = 'none';
+    loadVault();
+  } catch (e) {
+    alert('Move failed.');
+  }
+});
+
 // Kanban functionality
 let kanbanBoards = [];
 let currentKanbanFile = 'kanban.md';
+let currentKanbanContainer = null; // tracks which container renderKanban last rendered to
 
 async function loadKanbanList() {
   try {
-    const res = await fetch(`/api/kanban/list?token=${token}`);
+    const res = await fetch(`/api/kanban/list?token=${token}${asParam()}`);
     const data = await res.json();
     kanbanBoards = data.boards || [];
     renderKanbanList();
@@ -1280,6 +1495,7 @@ async function loadKanbanList() {
 
 function renderKanbanList() {
   const list = document.getElementById('kanbanList');
+  if (!list) return;
   list.innerHTML = '';
   kanbanBoards.forEach(board => {
     const div = document.createElement('div');
@@ -1315,11 +1531,11 @@ function renderKanbanList() {
 
 async function renameKanbanBoard(file, newTitle) {
   try {
-    const res = await fetch(`/api/kanban?token=${token}&file=${encodeURIComponent(file)}`);
+    const res = await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(file)}`);
     const data = await res.json();
     const kanban = data.kanban || getDefaultKanban();
     kanban.title = newTitle;
-    await fetch(`/api/kanban?token=${token}&file=${encodeURIComponent(file)}`, {
+    await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(file)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kanban })
@@ -1336,7 +1552,7 @@ async function renameKanbanBoard(file, newTitle) {
 
 async function deleteKanbanBoard(file) {
   try {
-    await fetch(`/api/kanban?token=${token}&file=${encodeURIComponent(file)}`, { method: 'DELETE' });
+    await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(file)}`, { method: 'DELETE' });
     if (currentKanbanFile === file) {
       currentKanbanFile = 'kanban.md';
     }
@@ -1347,7 +1563,8 @@ async function deleteKanbanBoard(file) {
   }
 }
 
-document.getElementById('newKanbanBtn').addEventListener('click', async () => {
+const newKanbanBtnEl = document.getElementById('newKanbanBtn');
+if (newKanbanBtnEl) newKanbanBtnEl.addEventListener('click', async () => {
   const name = prompt('Board name:');
   if (!name || !name.trim()) return;
   // Generate unique filename that won't conflict
@@ -1363,7 +1580,7 @@ document.getElementById('newKanbanBtn').addEventListener('click', async () => {
     { id: 'done', title: 'Done', cards: [] }
   ]};
   // Save the new board without switching currentKanbanFile first
-  await fetch(`/api/kanban?token=${token}&file=${encodeURIComponent(file)}`, {
+  await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(file)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kanban: newKanban })
@@ -1376,7 +1593,7 @@ document.getElementById('newKanbanBtn').addEventListener('click', async () => {
 
 async function loadKanban() {
   try {
-    const res = await fetch(`/api/kanban?token=${token}&file=${encodeURIComponent(currentKanbanFile)}`);
+    const res = await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(currentKanbanFile)}`);
     const data = await res.json();
     currentKanban = data.kanban || getDefaultKanban();
     renderKanban();
@@ -1439,8 +1656,10 @@ function renderCardContent(card) {
   return html;
 }
 
-function renderKanban() {
-  kanbanBoard.innerHTML = '';
+function renderKanban(container) {
+  if (!container) container = currentKanbanContainer || kanbanBoard;
+  currentKanbanContainer = container;
+  container.innerHTML = '';
 
   currentKanban.lanes.forEach(lane => {
     const column = document.createElement('div');
@@ -1478,7 +1697,7 @@ function renderKanban() {
       </div>
     `;
 
-    kanbanBoard.appendChild(column);
+    container.appendChild(column);
 
     // Add card button — opens modal for new card
     column.querySelector('.add-card-btn').addEventListener('click', () => {
@@ -1550,7 +1769,7 @@ function renderKanban() {
   });
 
   // Make cards draggable
-  document.querySelectorAll('.kanban-card').forEach(card => {
+  container.querySelectorAll('.kanban-card').forEach(card => {
     card.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('cardIndex', card.dataset.cardIndex);
       e.dataTransfer.setData('sourceLaneId', card.closest('.cards-container').dataset.laneId);
@@ -1567,7 +1786,7 @@ function renderKanban() {
   addLaneBtn.innerHTML = '<i class="fas fa-plus"></i>';
   addLaneBtn.title = 'Add Lane';
   addLaneBtn.addEventListener('click', addLane);
-  kanbanBoard.appendChild(addLaneBtn);
+  container.appendChild(addLaneBtn);
 }
 
 function addCard(laneId, title) {
@@ -1617,7 +1836,12 @@ function addLane() {
 
 async function saveKanban() {
   try {
-    await fetch(`/api/kanban?token=${token}&file=${encodeURIComponent(currentKanbanFile)}`, {
+    // When rendering a kanban file inline in the vault, derive the filename from currentFile
+    let fileToSave = currentKanbanFile;
+    if (currentFile && (currentFile.path.startsWith('kanban/') || currentFile.path.includes('/kanban/'))) {
+      fileToSave = currentFile.path.split('/').pop();
+    }
+    await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(fileToSave)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kanban: currentKanban })
@@ -1643,12 +1867,37 @@ socket.on('chat:history', (data) => {
     data.messages.forEach(msg => {
       // Hide user /approve commands — the approval card shows the decision
       if (msg.role === 'user' && /^\/?approve\s+[a-f0-9]+\s/i.test(msg.content.trim())) return;
-      addMessage(msg.content, msg.role);
+      addMessage(msg.content, msg.role, msg.timestamp);
     });
   }
+  renderedMessageCount = messagesDiv.children.length;
   // Re-check if agent is still processing (indicator was cleared with innerHTML)
   socket.emit('agent:status');
+
+  // Restart background poll for this session
+  startBackgroundPoll();
 });
+
+// Background poll: fetch new messages that arrived without a user trigger (heartbeats, proactive agent messages)
+function startBackgroundPoll() {
+  if (backgroundPollTimer) clearInterval(backgroundPollTimer);
+  backgroundPollTimer = setInterval(async () => {
+    if (!activeSessionKey || processingSessions.has(activeSessionKey)) return;
+    try {
+      const asQ = asParam();
+      const res = await fetch(`/api/chat/history?token=${token}${asQ}&sessionKey=${encodeURIComponent(activeSessionKey)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const msgs = (data.messages || []).filter(m =>
+        !(m.role === 'user' && /^\/?approve\s+[a-f0-9]+\s/i.test((m.content || '').trim()))
+      );
+      if (msgs.length > renderedMessageCount) {
+        const newMsgs = msgs.slice(renderedMessageCount);
+        newMsgs.forEach(msg => addMessage(msg.content, msg.role, msg.timestamp));
+      }
+    } catch { /* ignore */ }
+  }, 5000);
+}
 
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -1684,7 +1933,31 @@ document.querySelectorAll('.wysiwyg-toolbar button[data-cmd]').forEach(btn => {
     const cmd = btn.dataset.cmd;
 
     if (cmd === 'checkbox') {
-      document.execCommand('insertHTML', false, '<div><label class="cb-item"><input type="checkbox"><span>&nbsp;</span></label></div>');
+      // Insert a markdown checkbox line the user can type into
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        // If cursor is at end of a non-empty block, insert a new div after
+        const block = range.startContainer.nodeType === 3
+          ? range.startContainer.parentElement.closest('div, p, li') || range.startContainer.parentElement
+          : range.startContainer;
+        const newDiv = document.createElement('div');
+        newDiv.textContent = '- [ ] ';
+        // Place after current block, or append
+        if (block && block !== editor && block.parentNode === editor) {
+          block.after(newDiv);
+        } else {
+          editor.appendChild(newDiv);
+        }
+        // Move cursor to end of new line
+        const newRange = document.createRange();
+        newRange.setStart(newDiv.firstChild, newDiv.textContent.length);
+        newRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+      } else {
+        document.execCommand('insertHTML', false, '<div>- [ ] </div>');
+      }
     } else {
       document.execCommand(cmd, false, null);
     }
@@ -1731,13 +2004,8 @@ function htmlToMarkdown(el) {
             md += '\n- ' + htmlToMarkdown(li).trim();
           }
         });
-      } else if (tag === 'label' && node.classList.contains('cb-item')) {
-        const checked = node.querySelector('input[type="checkbox"]')?.checked;
-        const span = node.querySelector('span');
-        const text = (span ? span.textContent : '').replace(/\u00a0/g, '').trim();
-        md += '\n- [' + (checked ? 'x' : ' ') + '] ' + text;
       } else if (tag === 'input' && node.type === 'checkbox') {
-        // skip, handled by parent label
+        // skip — checkboxes in editor are plain text now
       } else {
         md += htmlToMarkdown(node);
       }
@@ -1746,16 +2014,14 @@ function htmlToMarkdown(el) {
   return md;
 }
 
-// Convert markdown to editor HTML
+// Convert markdown to editor HTML — checkboxes stay as plain text so they're editable
 function markdownToEditorHtml(md) {
   if (!md) return '';
   return md.split('\n').map(line => {
-    const cbMatch = line.match(/^\s*- \[([ xX])\]\s?(.*)$/);
-    if (cbMatch) {
-      const checked = cbMatch[1] === 'x' ? ' checked' : '';
-      return `<div><label class="cb-item"><input type="checkbox"${checked}><span>${escapeHtml(cbMatch[2])}</span></label></div>`;
+    // Keep checkbox lines as plain editable text (- [ ] text or - [x] text)
+    if (/^\s*- \[([ xX])\]/.test(line)) {
+      return `<div>${escapeHtml(line)}</div>`;
     }
-    // Use marked for inline formatting (bold, italic, etc) but keep as a div
     const inlineHtml = marked.parseInline(line);
     return `<div>${inlineHtml || '<br>'}</div>`;
   }).join('');

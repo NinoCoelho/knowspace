@@ -185,6 +185,32 @@
       color: white;
     }
 
+    /* Timestamp + reply row */
+    .message .msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .message:hover .msg-meta {
+      opacity: 1;
+    }
+    .msg-timestamp {
+      font-size: 10px;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+    .message.user .msg-timestamp {
+      color: rgba(255,255,255,0.6);
+      text-align: right;
+    }
+    .msg-reply-btn {
+      padding: 2px 6px !important;
+      font-size: 11px !important;
+    }
+
     /* Exec approval card in chat */
     .approval-card {
       background: var(--bg-primary);
@@ -271,6 +297,30 @@
     .approval-card.resolved .approval-resolved {
       display: block;
     }
+
+    /* Subagent event separator */
+    .subagent-event {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+      color: var(--text-secondary);
+      font-size: 11px;
+      opacity: 0.6;
+    }
+    .subagent-event::before,
+    .subagent-event::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border-light);
+    }
+    .subagent-event .subagent-label {
+      white-space: nowrap;
+      letter-spacing: 0.02em;
+    }
+    .subagent-event .status-ok { color: #4caf50; }
+    .subagent-event .status-err { color: #e57373; }
 
     /* Vault link in chat */
     .vault-link {
@@ -398,6 +448,8 @@
     .session-item:hover .session-actions {
       display: flex;
     }
+
+
     .session-action-btn {
       border: none;
       background: none;
@@ -1055,7 +1107,6 @@
     <div class="sidebar-collapsed-icons">
       <button data-view="chat" title="Chat"><i class="fas fa-comment"></i></button>
       <button data-view="vault" title="Vault"><i class="fas fa-folder"></i></button>
-      <button data-view="kanban" title="Kanban"><i class="fas fa-columns"></i></button>
     </div>
 
     <!-- Full sidebar content -->
@@ -1063,6 +1114,9 @@
       <div class="p-6 pb-3">
         <img src="/images/knowspace.png" alt="Knowspace" class="h-7 mb-1">
         <p class="text-sm text-gray-500" id="clientName">Loading...</p>
+        <div id="clientSwitcher" style="display:none; margin-top:6px;">
+          <select id="clientSelect" style="width:100%; font-size:12px; padding:4px 8px; border-radius:8px; border:1px solid var(--border-light); background:var(--bg-secondary); color:var(--text-primary); cursor:pointer; outline:none;"></select>
+        </div>
       </div>
 
       <!-- Nav tabs -->
@@ -1072,9 +1126,6 @@
       </a>
       <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="vault">
         <i class="fas fa-folder mr-1.5"></i>Vault
-      </a>
-      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="kanban">
-        <i class="fas fa-columns mr-1.5"></i>Kanban
       </a>
     </nav>
 
@@ -1092,7 +1143,7 @@
           <i class="fas fa-plus mr-1"></i>New
         </button>
       </div>
-      <div id="sessionList" class="flex-1 overflow-y-auto px-3 pb-2 min-h-0"></div>
+<div id="sessionList" class="flex-1 overflow-y-auto px-3 pb-2 min-h-0"></div>
     </div>
 
     <!-- Vault panel -->
@@ -1108,18 +1159,6 @@
         </button>
       </div>
       <div id="vaultTree" class="flex-1 overflow-y-auto px-2 pb-2 min-h-0"></div>
-    </div>
-
-    <!-- Kanban panel -->
-    <div id="sidebarKanban" class="flex-1 flex flex-col min-h-0 hidden">
-      <div class="px-4 py-1 flex items-center justify-between flex-shrink-0">
-        <span class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-secondary);">Boards</span>
-        <button id="newKanbanBtn" class="px-2 py-1 rounded-md text-xs font-medium text-white transition-all hover:opacity-90"
-                style="background: var(--accent-primary);">
-          <i class="fas fa-plus mr-1"></i>New
-        </button>
-      </div>
-      <div id="kanbanList" class="flex-1 overflow-y-auto px-3 pb-2 min-h-0"></div>
     </div>
 
       <div class="p-4 border-t flex-shrink-0" style="border-color: var(--border-light);">
@@ -1168,6 +1207,8 @@
           <h2 id="vaultFileName" class="font-semibold">Select a file</h2>
           <div id="vaultActions" class="flex gap-2" style="display:none;">
             <button id="vaultEditBtn" class="vault-action-btn" title="Edit"><i class="fas fa-pen"></i></button>
+            <button id="vaultConvertKanbanBtn" class="vault-action-btn" title="Convert to Kanban" style="display:none;"><i class="fas fa-columns"></i></button>
+            <button id="vaultMoveBtn" class="vault-action-btn" title="Move file"><i class="fas fa-folder-open"></i></button>
             <button id="vaultDeleteBtn" class="vault-action-btn vault-delete-btn" title="Delete"><i class="fas fa-trash"></i></button>
           </div>
         </div>

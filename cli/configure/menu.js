@@ -3,6 +3,7 @@
  */
 
 const prompts = require('./prompts');
+const gateway = require('./gateway');
 const workspace = require('./workspace');
 const vault = require('./vault');
 const skills = require('./skills');
@@ -18,26 +19,23 @@ module.exports = async function menu() {
   while (true) {
     const installed = (config.installedSkills || []).length;
     const options = [
-      { label: 'Workspace', description: 'SOUL, USER, AGENTS, IDENTITY' },
+      { label: 'Gateway', description: config.gatewayUrl || config.openclawDir || 'not set' },
       { label: 'Vault location', description: config.vaultPath || 'not set' },
       { label: 'Skills', description: `${installed} installed` },
       { label: 'Access tokens', description: 'generate or list' },
       { label: 'Environment keys', description: 'view and update API keys' },
+      { label: 'Workspace templates', description: 'SOUL, USER, AGENTS, IDENTITY' },
       { label: 'Quit' },
     ];
 
     const choice = await prompts.select('What would you like to configure?', options);
 
     switch (choice) {
-      case 0: { // Workspace
-        const info = await workspace.setupWorkspace(config);
-        if (info) {
-          config.slug = info.slug;
-          config.clientName = info.clientName;
-          config.agentName = info.agentName;
-          config.timezone = info.timezone;
-          config.businessContext = info.businessContext;
-          config.vibeDescription = info.vibeDescription;
+      case 0: { // Gateway
+        const gw = await gateway.configureGateway(config);
+        if (gw) {
+          config.openclawDir = gw.openclawDir;
+          config.gatewayUrl = gw.url;
           saveConfig(config);
         }
         break;
@@ -112,7 +110,21 @@ module.exports = async function menu() {
         break;
       }
 
-      case 5: // Quit
+      case 5: { // Workspace templates
+        const info = await workspace.setupWorkspace(config);
+        if (info) {
+          config.slug = info.slug;
+          config.clientName = info.clientName;
+          config.agentName = info.agentName;
+          config.timezone = info.timezone;
+          config.businessContext = info.businessContext;
+          config.vibeDescription = info.vibeDescription;
+          saveConfig(config);
+        }
+        break;
+      }
+
+      case 6: // Quit
         prompts.close();
         return;
     }

@@ -4,6 +4,7 @@ const path = require('path');
 
 const commands = {
   serve: '../cli/serve',
+  connect: '../cli/connect',
   configure: '../cli/configure',
   onboard: '../cli/onboard',
   tokens: '../cli/tokens',
@@ -20,8 +21,8 @@ if (!command || command === '--help' || command === '-h') {
 
   Commands:
     serve                       Start the portal server
+    connect                     Configure OpenClaw connection and install onboard skill
     configure                   Interactive setup (wizard or menu)
-    onboard <slug>              Legacy: onboard client (use 'configure' instead)
     tokens list                 List all client tokens
     tokens generate <slug>      Generate a new token
     tokens rotate <slug>        Rotate an existing token

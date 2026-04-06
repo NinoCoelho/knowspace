@@ -5,6 +5,7 @@
 
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const HOME = process.env.HOME || '/home/nino';
 
@@ -33,7 +34,14 @@ function getDefaultSessionKey(clientSlug) {
 }
 
 function getSkillsTargetPath() {
-  return path.join(HOME, '.npm-global', 'lib', 'node_modules', 'openclaw', 'skills');
+  try {
+    const config = JSON.parse(fs.readFileSync(getEngineConfigPath(), 'utf8'));
+    const workspace = config?.agents?.workspace;
+    if (workspace) return path.join(workspace, 'skills');
+  } catch {
+    // openclaw.json missing or malformed — fall through
+  }
+  return path.join(HOME, '.openclaw', 'workspace', 'skills');
 }
 
 module.exports = {

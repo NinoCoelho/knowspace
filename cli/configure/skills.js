@@ -70,6 +70,17 @@ function installSkill(skillName, skillsTarget) {
     recursive: true,
     filter: (source) => !source.includes('__pycache__'),
   });
+
+  // Add skill reference to AGENTS.md in the workspace so the agent knows about it
+  const agentsMd = path.join(skillsTarget, '..', 'AGENTS.md');
+  if (fs.existsSync(agentsMd)) {
+    const content = fs.readFileSync(agentsMd, 'utf8');
+    const skillRef = `- Skill: \`${skillsTarget}/${skillName}/\``;
+    if (!content.includes(`/${skillName}/`)) {
+      fs.appendFileSync(agentsMd, `\n${skillRef}\n`);
+    }
+  }
+
   return true;
 }
 

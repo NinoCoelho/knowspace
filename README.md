@@ -1,162 +1,172 @@
-# Knowspace — Client Portal
+# Knowspace
 
-Portal web para clientes com chat em tempo real, file vault e kanban, usando [OpenClaw](https://github.com/openclaw/openclaw) como engine subjacente.
+A web portal sidecar for [OpenClaw](https://github.com/openclaw/openclaw) that gives small teams a simple browser interface for AI agent interactions. Adds chat history, a file vault, and a kanban board on top of an existing OpenClaw installation — no Docker, no database, no separate infrastructure.
+
+```
+Browser → Knowspace Portal → Adapter Layer → OpenClaw Gateway
+```
 
 ## Features
 
-- **Chat** — Comunicacao em tempo real com agentes via WebSocket
-- **Vault** — Visualizador de arquivos markdown e midia com busca fuzzy
-- **Kanban** — Gestao de tarefas com drag-and-drop (formato Obsidian)
+- **Chat** — Real-time conversation with your OpenClaw agent. Full history, file attachments, subtask awareness.
+- **Vault** — Markdown and media file viewer with fuzzy search, backed by the agent workspace on disk.
+- **Kanban** — Drag-and-drop task board stored as Obsidian-compatible markdown files.
 
-## Quick Start com Docker
-
-```bash
-# 1. Configurar
-cp .env.example .env
-# Editar .env com suas credenciais (CLAUDE_AI_SESSION_KEY, etc.)
-
-# 2. Criar diretorio de dados
-mkdir -p data/openclaw-config data/workspaces data/knowspace data/appdata
-
-# 3. Subir
-docker compose up -d
-
-# 4. Pegar o token de acesso nos logs (so aparece no primeiro boot)
-docker compose logs knowspace | grep "Access link"
-```
-
-No primeiro boot, o knowspace gera automaticamente um token para o usuario `main` e imprime a URL de acesso nos logs. Copie e acesse no navegador.
-
-### Variaveis de ambiente
-
-| Variavel | Descricao | Default |
-|----------|-----------|---------|
-| `OPENCLAW_GATEWAY_TOKEN` | Token de auth do gateway | (obrigatorio) |
-| `CLAUDE_AI_SESSION_KEY` | Session key da Claude API | (obrigatorio) |
-| `KNOWSPACE_PORT` | Porta do portal | `3445` |
-| `KNOWSPACE_BASE_URL` | URL publica do portal | `http://localhost:3445` |
-| `KNOWSPACE_ADMIN_SLUG` | Slug do usuario admin inicial | `main` |
-| `GATEWAY_PORT` | Porta exposta do gateway | `18789` |
-| `TZ` | Timezone | `America/Sao_Paulo` |
-
-### Comandos uteis
-
-```bash
-# Ver logs
-docker compose logs -f knowspace
-docker compose logs -f gateway
-
-# Reiniciar
-docker compose restart
-
-# Parar
-docker compose down
-
-# Rebuild apos mudancas no codigo
-docker compose build knowspace && docker compose up -d knowspace
-```
-
-## Desenvolvimento local (sem Docker)
-
-### Requisitos
+## Requirements
 
 - Node.js 22+
-- Gateway OpenClaw rodando (default: `ws://127.0.0.1:18789`)
+- OpenClaw installed and running (`openclaw gateway`)
 
-### Setup
+## Installation
 
 ```bash
 git clone <repo-url> && cd knowspace
 npm install
-npm link   # disponibiliza o comando 'knowspace' globalmente
+npm link          # makes 'knowspace' available globally
 ```
 
-### Iniciar
+## Setup
+
+### 1. Connect to OpenClaw
+
+Detects your OpenClaw config, saves the connection, and installs the `knowspace-onboard` skill into the agent workspace:
 
 ```bash
-knowspace serve              # porta default (3445)
-knowspace serve --port 4000  # porta customizada
-
-# ou
-npm start
+knowspace connect
 ```
 
-### Testes
+### 2. Configure the portal
+
+Interactive wizard on first run (3 steps: gateway, vault path, access token). Opens a menu on subsequent runs.
 
 ```bash
-npm test   # 49 testes de contrato para a adapter layer
+knowspace configure
 ```
 
-## CLI — Knowspace
-
-### Onboarding de clientes
-
-Instala skills no engine, gera templates de workspace e token de acesso:
+### 3. Start
 
 ```bash
-knowspace onboard <slug>
-knowspace onboard <slug> --output ~/<slug>/workspace
-knowspace onboard <slug> --skills-target /path/to/engine/skills
+knowspace serve              # default port 3445
+knowspace serve --port 4000
 ```
 
-### Gestao de tokens
+The portal is available at `http://localhost:3445`. The access link is printed on first boot.
+
+---
+
+## CLI Reference
+
+### `knowspace connect`
+
+Configures the OpenClaw connection and installs the onboard skill. Run once after installation, and again to reinstall the skill after updates.
 
 ```bash
-knowspace tokens list              # listar todos
-knowspace tokens generate <slug>   # gerar novo
-knowspace tokens rotate <slug>     # rotacionar existente
+knowspace connect
 ```
 
-## Arquitetura
+1. Reads `~/.openclaw/openclaw.json` to detect gateway URL and token
+2. Saves connection overrides to `~/.knowspace/.env` if needed
+3. Copies `knowspace-onboard` skill to the agent workspace (`~/.openclaw/workspace/skills/`)
+4. Registers the skill in `AGENTS.md`
 
-O knowspace usa uma arquitetura de **wrapper com adapter layer**: o produto (CLI, UX, branding) fica separado do engine (OpenClaw), conectados por uma camada de adaptacao que centraliza todo o acoplamento.
+### `knowspace configure`
 
-```
-Usuário → Knowspace Portal → Adapter Layer → OpenClaw Gateway
-```
+Interactive setup. First run is a sequential wizard; subsequent runs open a menu.
 
-### Estrutura de diretorios
-
-```
-server.js                  # Express + Socket.IO (usa apenas adapters/)
-adapters/engine/           # Adapter layer — unico ponto de acoplamento com o engine
-  paths.js                 # Paths e session key formats do engine
-  messages.js              # Normalizacao e filtros de mensagens
-  sessions.js              # CRUD de sessoes via gateway RPC
-  chat.js                  # Chat: historico, envio, polling
-  index.js                 # Barrel export
-lib/gateway.js             # WebSocket RPC client (transporte baixo nivel)
-middleware/auth.js          # Autenticacao por token (SHA-256)
-routes/api.js              # API REST (vault, kanban)
-public/                    # Frontend SPA (vanilla JS + Tailwind)
-bin/knowspace.js           # CLI entry point
-cli/                       # Comandos do CLI (serve, onboard, tokens)
-skills/                    # Skills bundled
-templates/                 # Templates de workspace
-tests/adapters/            # Testes de contrato da adapter layer
-Dockerfile                 # Imagem do knowspace
-docker-compose.yml         # Gateway + knowspace
+```bash
+knowspace configure
+knowspace configure --reset    # force wizard again
 ```
 
-### Stack
+**Wizard steps:**
+1. **Gateway** — detects `~/.openclaw/openclaw.json`; confirm or enter an alternate path
+2. **Vault** — path to the client's files (default: `~/main/workspace/vault`)
+3. **Token** — generates the portal access link for slug `main`
 
-- **Backend:** Express.js, Socket.IO, Multer, Fuse.js
-- **Frontend:** Vanilla JS, Tailwind CSS, Marked.js
-- **Dados:** File system (zero database)
-- **Auth:** Tokens SHA-256 com cookie
-- **Engine:** OpenClaw via WebSocket RPC (Ed25519 device identity)
+**Menu options** (subsequent runs): Gateway, Vault location, Skills, Access tokens, Environment keys, Workspace templates.
 
-## Skills bundled
+### `knowspace serve`
 
-| Skill | Descricao |
-|-------|-----------|
-| `client-onboard` | Workflow de onboarding de clientes |
-| `instagram-carousel` | Geracao de carroseis com framework PAS |
-| `content-matrix` | Calendario e fila de conteudo |
-| `trend-detector` | Deteccao de tendencias |
-| `linkedin_post` | Geracao de posts LinkedIn |
-| `herenow` | Publicacao HTML instantanea |
+```bash
+knowspace serve [--port 3445]
+```
 
-## Licenca
+### `knowspace tokens`
 
-Proprietario.
+```bash
+knowspace tokens list
+knowspace tokens generate <slug>
+knowspace tokens rotate <slug>
+```
+
+---
+
+## Environment Variables
+
+Set in shell or `~/.knowspace/.env`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KNOWSPACE_GATEWAY_URL` | WebSocket URL of the OpenClaw gateway | `ws://127.0.0.1:18789` |
+| `KNOWSPACE_GATEWAY_TOKEN` | Gateway auth token | read from `openclaw.json` |
+| `KNOWSPACE_PORT` | Portal port | `3445` |
+| `KNOWSPACE_BASE_URL` | Public URL (used in token links) | `http://localhost:<port>` |
+| `KNOWSPACE_ADMIN_SLUG` | Slug for the first-boot auto-generated token | `main` |
+| `KNOWSPACE_TOKENS_FILE` | Path to the tokens file | `.tokens.json` |
+
+---
+
+## Onboarding Clients
+
+Install the `knowspace-onboard` skill via `knowspace connect`, then ask your agent:
+
+> "Onboard a new client, slug: acme-corp"
+
+The agent will:
+1. Create the workspace and vault at `~/acme-corp/workspace/`
+2. Register the agent with OpenClaw
+3. Generate a portal access token and return the login link
+
+Clients access the portal via browser — no app, no bot, no extra setup.
+
+---
+
+## Architecture
+
+Knowspace is a **sidecar** to OpenClaw. It adds a product layer (web UI, CLI, auth, vault) without modifying the engine. All engine interaction is isolated to the adapter layer.
+
+```
+server.js                    Express + Socket.IO server
+adapters/engine/
+  index.js                   Barrel export
+  paths.js                   Engine path conventions, session key formats
+  messages.js                Message normalization, filtering, status detection
+  sessions.js                Session CRUD via gateway RPC
+  chat.js                    Chat: history, send, streaming poll
+lib/gateway.js               Low-level WebSocket RPC client (Ed25519 auth)
+middleware/auth.js           Token authentication (SHA-256 hashed)
+routes/api.js                REST API: vault, kanban
+public/
+  index.html                 SPA entry point
+  js/app.js                  Frontend (vanilla JS)
+bin/knowspace.js             CLI entry point
+cli/
+  connect.js                 Configure gateway + install skill
+  configure/                 Interactive wizard and menu
+  serve.js                   Start server
+  tokens.js                  Token management
+skills/
+  knowspace-onboard/         Agent skill for onboarding portal clients
+templates/                   Workspace markdown templates
+tests/adapters/              Contract tests (49) for the adapter layer
+```
+
+**Rule:** `server.js` never imports `lib/gateway.js` directly. All engine calls go through `adapters/engine/`.
+
+**Stack:** Node.js, Express, Socket.IO, Vanilla JS, Tailwind CSS (CDN), filesystem (no database).
+
+---
+
+## License
+
+Proprietary.

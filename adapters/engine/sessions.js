@@ -28,6 +28,7 @@ async function listSessions(clientSlug, retries = 2) {
           label: s.label || s.derivedTitle || s.title || s.key.split(':').pop(),
           updatedAt: s.updatedAt,
           totalTokens: s.totalTokens,
+          isSubagent: !s.key.includes(':web:direct:portal-'),
         }));
 
       // Filter out sessions whose .jsonl files no longer exist on disk
