@@ -6,6 +6,7 @@ const commands = {
   serve: '../cli/serve',
   connect: '../cli/connect',
   configure: '../cli/configure',
+  gateway: '../cli/gateway',
   onboard: '../cli/onboard',
   tokens: '../cli/tokens',
 };
@@ -23,6 +24,7 @@ if (!command || command === '--help' || command === '-h') {
     serve                       Start the portal server
     connect                     Configure OpenClaw connection and install onboard skill
     configure                   Interactive setup (wizard or menu)
+    gateway <sub>               Manage the OpenClaw gateway daemon (install/uninstall/start/stop/restart/status)
     tokens list                 List all client tokens
     tokens generate <slug>      Generate a new token
     tokens rotate <slug>        Rotate an existing token
