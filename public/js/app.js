@@ -1052,29 +1052,41 @@ async function openVaultPreview(filePath) {
   // Resolve path (with or without .md)
   const target = filePath.replace(/^\/+/, '');
 
+  async function fetchVaultFiles() {
+    const res = await fetch(`/api/vault?token=${token}${asParam()}`);
+    const data = await res.json();
+    vaultFiles = (data.files || []).filter(f => {
+      const ext = f.path.split('.').pop().toLowerCase();
+      return ['md', 'markdown', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+    });
+  }
+
   // Fetch vault file list if not loaded
   if (vaultFiles.length === 0) {
-    try {
-      const res = await fetch(`/api/vault?token=${token}${asParam()}`);
-      const data = await res.json();
-      vaultFiles = (data.files || []).filter(f => {
-        const ext = f.path.split('.').pop().toLowerCase();
-        return ['md', 'markdown', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
-      });
-    } catch { /* ignore */ }
+    try { await fetchVaultFiles(); } catch { /* ignore */ }
+  }
+
+  function findInVault(list, cleanTarget) {
+    return list.find(f =>
+      f.path === cleanTarget ||
+      f.path === cleanTarget + '.md' ||
+      f.path === cleanTarget + '.markdown' ||
+      f.path.replace(/\.(md|markdown)$/, '') === cleanTarget ||
+      f.path.startsWith(cleanTarget + '/')
+    );
   }
 
   const cleanTarget = target.replace(/\/+$/, '');
-  let file = vaultFiles.find(f =>
-    f.path === cleanTarget ||
-    f.path === cleanTarget + '.md' ||
-    f.path === cleanTarget + '.markdown' ||
-    f.path.replace(/\.(md|markdown)$/, '') === cleanTarget
-  );
-  // If target looks like a directory, find first file inside it
+  let file = findInVault(vaultFiles, cleanTarget);
+
+  // Not found in cached list — force a fresh fetch and retry once
   if (!file) {
-    file = vaultFiles.find(f => f.path.startsWith(cleanTarget + '/'));
+    try {
+      await fetchVaultFiles();
+      file = findInVault(vaultFiles, cleanTarget);
+    } catch { /* ignore */ }
   }
+
   if (!file) {
     alert('File not found: ' + filePath);
     return;
