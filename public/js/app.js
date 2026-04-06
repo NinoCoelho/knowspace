@@ -39,6 +39,7 @@ let pendingFiles = [];
 let sessions = [];
 let activeSessionKey = null;
 let pendingVaultOpen = null;
+let isInitialLoad = true; // true until first chat:history received after connect
 const processingSessions = new Set();
 let renderedMessageCount = 0; // tracks how many messages are currently displayed
 let backgroundPollTimer = null;
@@ -204,9 +205,15 @@ function switchView(view) {
   // Update session list active highlight
   if (view === 'chat') {
     renderSessionList();
-    // Re-check agent status and scroll to bottom
-    socket.emit('agent:status');
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    // If no session is active yet but sessions are loaded, select the first one
+    const portalSessions = sessions.filter(s => !s.isSubagent);
+    if (!activeSessionKey && portalSessions.length > 0) {
+      socket.emit('sessions:switch', { sessionKey: portalSessions[0].key });
+    } else {
+      // Re-check agent status and scroll to bottom
+      socket.emit('agent:status');
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
   }
 
   // Load data for view
@@ -249,6 +256,7 @@ function updateConnectionStatus(status) {
 socket.on('connect', () => {
   console.log('Connected to server');
   updateConnectionStatus('connected');
+  isInitialLoad = true;
   loadClientInfo();
 
   // Preload vault file list for chat autocomplete
@@ -897,8 +905,9 @@ async function loadVault(autoOpenPath) {
 
     renderVaultTree();
 
-    // Auto-open a file if requested (from deep link or pendingVaultOpen)
-    const target = (autoOpenPath || pendingVaultOpen || '').replace(/^\/+/, '');
+    // Auto-open a file if requested (from deep link, pendingVaultOpen, or last selected)
+    const savedVaultFile = localStorage.getItem('ks_lastVaultFile') || '';
+    const target = (autoOpenPath || pendingVaultOpen || savedVaultFile || '').replace(/^\/+/, '');
     pendingVaultOpen = null;
     if (target) {
       const file = vaultFiles.find(f =>
@@ -1171,6 +1180,7 @@ async function loadFile(file) {
     document.getElementById('vaultConvertKanbanBtn').style.display = (ext === 'md' && !isKanbanFile) ? '' : 'none';
 
     currentFile = file;
+    localStorage.setItem('ks_lastVaultFile', file.path);
 
     // Update active state
     document.querySelectorAll('.vault-item.file').forEach(el => {
@@ -1948,8 +1958,21 @@ socket.on('connect_error', (error) => {
 socket.on('chat:history', (data) => {
   if (data.sessionKey !== undefined) {
     activeSessionKey = data.sessionKey;
+    if (data.sessionKey) localStorage.setItem('ks_lastSessionKey', data.sessionKey);
     renderSessionList();
   }
+
+  // On initial connect, restore last selected session if different from server's auto-selected
+  if (isInitialLoad) {
+    isInitialLoad = false;
+    const savedKey = localStorage.getItem('ks_lastSessionKey');
+    const portalSessions = sessions.filter(s => !s.isSubagent);
+    if (savedKey && savedKey !== data.sessionKey && portalSessions.some(s => s.key === savedKey)) {
+      socket.emit('sessions:switch', { sessionKey: savedKey });
+      return; // skip rendering server's auto-selected history; wait for saved session history
+    }
+  }
+
   messagesDiv.innerHTML = '';
   if (data.messages && data.messages.length > 0) {
     data.messages.forEach(msg => {
