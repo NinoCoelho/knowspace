@@ -73,7 +73,9 @@ module.exports = async function tokens(argv) {
 };
 
 function printToken(slug, token) {
-  const baseUrl = process.env.KNOWSPACE_BASE_URL || 'http://localhost:3445';
+  const { loadConfig } = require('./configure/state');
+  const config = loadConfig();
+  const baseUrl = process.env.KNOWSPACE_BASE_URL || config.baseUrl || 'http://localhost:3445';
   console.log(`
   === Token Generated ===
 
