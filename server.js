@@ -13,15 +13,23 @@ const engine = require('./adapters/engine');
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
 function getVaultBase(clientSlug) {
+  let vaultPath;
   try {
     const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
     if (config.vaultPath && config.slug === clientSlug) {
-      return config.vaultPath;
+      vaultPath = config.vaultPath;
     }
   } catch {
     // config not found or invalid — fall through
   }
-  return path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+  if (!vaultPath) {
+    vaultPath = path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+  }
+  try {
+    return fs.realpathSync(vaultPath);
+  } catch {
+    return vaultPath;
+  }
 }
 
 const app = express();
@@ -130,9 +138,10 @@ app.get('/auth', (req, res) => {
   }
 
   // Set secure httpOnly cookie
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
   res.cookie('auth_token', token, {
     httpOnly: false, // Allow JavaScript to access for Socket.IO
-    secure: true, // Served over HTTPS via Tailscale
+    secure: isSecure,
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     sameSite: 'lax'
   });

@@ -9,15 +9,37 @@ const Fuse = require('fuse.js');
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
 function getVaultBase(clientSlug) {
+  let vaultPath;
   try {
     const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
     if (config.vaultPath && config.slug === clientSlug) {
-      return config.vaultPath;
+      vaultPath = config.vaultPath;
     }
   } catch {
     // config not found or invalid — fall through
   }
-  return path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+  if (!vaultPath) {
+    vaultPath = path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+  }
+  // Resolve symlinks so path comparisons work correctly (e.g. /Users → /private/Users on macOS)
+  try {
+    return fs.realpathSync(vaultPath);
+  } catch {
+    return vaultPath; // path doesn't exist yet
+  }
+}
+
+function safeResolvePath(vaultBase, filePath) {
+  const full = path.resolve(vaultBase, filePath);
+  try {
+    return fs.realpathSync(full);
+  } catch {
+    return full; // file doesn't exist yet (e.g. new file being saved)
+  }
+}
+
+function isInsideVault(fullPath, vaultBase) {
+  return fullPath.startsWith(vaultBase + path.sep) || fullPath === vaultBase;
 }
 
 // Get chat history
@@ -69,10 +91,9 @@ router.get('/vault/file', (req, res) => {
   }
 
   const vaultBase = getVaultBase(clientSlug);
-  const fullPath = path.resolve(vaultBase, filePath);
+  const fullPath = safeResolvePath(vaultBase, filePath);
 
-  // Prevent path traversal
-  if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
+  if (!isInsideVault(fullPath, vaultBase)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
@@ -105,9 +126,9 @@ router.put('/vault/file', (req, res) => {
   if (!filePath) return res.status(400).json({ error: 'File path required' });
 
   const vaultBase = getVaultBase(clientSlug);
-  const fullPath = path.resolve(vaultBase, filePath);
+  const fullPath = safeResolvePath(vaultBase, filePath);
 
-  if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
+  if (!isInsideVault(fullPath, vaultBase)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
@@ -130,9 +151,9 @@ router.delete('/vault/file', (req, res) => {
   if (!filePath) return res.status(400).json({ error: 'File path required' });
 
   const vaultBase = getVaultBase(clientSlug);
-  const fullPath = path.resolve(vaultBase, filePath);
+  const fullPath = safeResolvePath(vaultBase, filePath);
 
-  if (!fullPath.startsWith(vaultBase + path.sep) && fullPath !== vaultBase) {
+  if (!isInsideVault(fullPath, vaultBase)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
@@ -153,14 +174,13 @@ router.post('/vault/move', (req, res) => {
   if (!from || !to) return res.status(400).json({ error: 'from and to paths required' });
 
   const vaultBase = getVaultBase(clientSlug);
-  const fullFrom = path.resolve(vaultBase, from);
-  const fullTo = path.resolve(vaultBase, to);
+  const fullFrom = safeResolvePath(vaultBase, from);
+  const fullTo = safeResolvePath(vaultBase, to);
 
-  // Prevent path traversal
-  if (!fullFrom.startsWith(vaultBase + path.sep) && fullFrom !== vaultBase) {
+  if (!isInsideVault(fullFrom, vaultBase)) {
     return res.status(403).json({ error: 'Access denied' });
   }
-  if (!fullTo.startsWith(vaultBase + path.sep) && fullTo !== vaultBase) {
+  if (!isInsideVault(fullTo, vaultBase)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 

@@ -18,9 +18,11 @@ module.exports = async function menu() {
 
   while (true) {
     const installed = (config.installedSkills || []).length;
+    const currentBaseUrl = env.getKey('KNOWSPACE_BASE_URL') || config.baseUrl || 'http://localhost:3445';
     const options = [
       { label: 'Gateway', description: config.gatewayUrl || config.openclawDir || 'not set' },
       { label: 'Vault location', description: config.vaultPath || 'not set' },
+      { label: 'Public URL', description: currentBaseUrl },
       { label: 'Skills', description: `${installed} installed` },
       { label: 'Access tokens', description: 'generate or list' },
       { label: 'Environment keys', description: 'view and update API keys' },
@@ -47,13 +49,26 @@ module.exports = async function menu() {
         break;
       }
 
-      case 2: { // Skills
+      case 2: { // Public URL
+        prompts.heading('Public URL');
+        prompts.info('Used in access token links (e.g. your Cloudflare Tunnel domain).');
+        const newUrl = await prompts.ask('Public URL', currentBaseUrl);
+        if (newUrl) {
+          env.setKey('KNOWSPACE_BASE_URL', newUrl);
+          config.baseUrl = newUrl;
+          saveConfig(config);
+          prompts.success(`Saved KNOWSPACE_BASE_URL=${newUrl}`);
+        }
+        break;
+      }
+
+      case 3: { // Skills
         config.installedSkills = await skills.interactiveSkillSetup(config);
         saveConfig(config);
         break;
       }
 
-      case 3: { // Tokens
+      case 4: { // Tokens
         const auth = new AuthManager();
         const tokenOpts = [
           { label: 'List tokens' },
@@ -74,7 +89,7 @@ module.exports = async function menu() {
           const slug = await prompts.ask('Client slug', config.slug || '');
           if (slug) {
             const token = auth.generateToken(slug);
-            const baseUrl = process.env.KNOWSPACE_BASE_URL || 'http://localhost:3445';
+            const baseUrl = env.getKey('KNOWSPACE_BASE_URL') || config.baseUrl || 'http://localhost:3445';
             prompts.success(`Token: ${token}`);
             prompts.info(`Link: ${baseUrl}/auth?token=${token}`);
           }
@@ -82,7 +97,7 @@ module.exports = async function menu() {
         break;
       }
 
-      case 4: { // Environment
+      case 5: { // Environment
         prompts.heading('Environment keys');
         const ksVars = env.readEnv(env.KNOWSPACE_ENV);
         const keys = Object.keys(ksVars);
@@ -110,7 +125,7 @@ module.exports = async function menu() {
         break;
       }
 
-      case 5: { // Workspace templates
+      case 6: { // Workspace templates
         const info = await workspace.setupWorkspace(config);
         if (info) {
           config.slug = info.slug;
@@ -124,7 +139,7 @@ module.exports = async function menu() {
         break;
       }
 
-      case 6: // Quit
+      case 7: // Quit
         prompts.close();
         return;
     }
