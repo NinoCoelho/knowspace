@@ -1087,18 +1087,16 @@ async function openVaultPreview(filePath) {
     } catch (e) { console.error('[vault] refresh error:', e); }
   }
 
-  // Last resort: try fetching the file directly by path (bypasses file list)
+  // Last resort: try server-side fuzzy search by filename stem
   if (!file) {
-    const pathsToTry = [cleanTarget, cleanTarget + '.md'];
-    for (const tryPath of pathsToTry) {
-      try {
-        const probe = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(tryPath)}`);
-        if (probe.ok) {
-          file = { path: tryPath };
-          break;
-        }
-      } catch (e) { console.error('[vault] direct fetch error:', e); }
-    }
+    try {
+      const stem = cleanTarget.split('/').pop().replace(/\.(md|markdown)$/, '');
+      const res = await fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(stem)}`);
+      const data = await res.json();
+      if (data.results && data.results.length > 0) {
+        file = data.results[0];
+      }
+    } catch (e) { console.error('[vault] search fallback error:', e); }
   }
 
   if (!file) {
