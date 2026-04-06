@@ -1063,7 +1063,7 @@ async function openVaultPreview(filePath) {
 
   // Fetch vault file list if not loaded
   if (vaultFiles.length === 0) {
-    try { await fetchVaultFiles(); } catch { /* ignore */ }
+    try { await fetchVaultFiles(); } catch (e) { console.error('[vault] preload error:', e); }
   }
 
   function findInVault(list, cleanTarget) {
@@ -1084,16 +1084,31 @@ async function openVaultPreview(filePath) {
     try {
       await fetchVaultFiles();
       file = findInVault(vaultFiles, cleanTarget);
-    } catch { /* ignore */ }
+    } catch (e) { console.error('[vault] refresh error:', e); }
+  }
+
+  // Last resort: try fetching the file directly by path (bypasses file list)
+  if (!file) {
+    const pathsToTry = [cleanTarget, cleanTarget + '.md'];
+    for (const tryPath of pathsToTry) {
+      try {
+        const probe = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(tryPath)}`);
+        if (probe.ok) {
+          file = { path: tryPath };
+          break;
+        }
+      } catch (e) { console.error('[vault] direct fetch error:', e); }
+    }
   }
 
   if (!file) {
+    console.error('[vault] file not found:', filePath, 'vaultFiles count:', vaultFiles.length);
     alert('File not found: ' + filePath);
     return;
   }
 
   try {
-    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${file.path}`);
+    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(file.path)}`);
     const content = await res.text();
     const ext = file.path.split('.').pop().toLowerCase();
     const cleanName = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
