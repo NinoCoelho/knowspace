@@ -420,6 +420,264 @@ messageInput?.addEventListener('input', (e) => {
   }
 });
 
+// Prompt Library
+let prompts = [];
+let currentPromptFilter = 'all';
+let editingPromptId = null;
+
+async function loadPrompts() {
+  try {
+    const res = await fetch(`/api/prompts?token=${token}${asParam()}`);
+    const data = await res.json();
+    prompts = data.prompts || [];
+    renderPrompts();
+  } catch (e) {
+    console.error('Failed to load prompts:', e);
+  }
+}
+
+function renderPrompts() {
+  const container = document.getElementById('promptList');
+  if (!container) return;
+
+  const filtered = currentPromptFilter === 'all'
+    ? prompts
+    : prompts.filter(p => p.category === currentPromptFilter);
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div class="text-center py-8" style="color: var(--text-secondary);">
+        <i class="fas fa-bookmark" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
+        <p class="text-sm">No prompts found</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = filtered.map(prompt => `
+    <div class="prompt-item" data-id="${escapeHtml(prompt.id)}">
+      <div class="prompt-icon">
+        <i class="fas ${prompt.icon || 'fa-robot'}"></i>
+      </div>
+      <div class="prompt-content">
+        <div class="prompt-title">${escapeHtml(prompt.title)}</div>
+        <div class="prompt-preview">${escapeHtml(prompt.content)}</div>
+      </div>
+      <div class="prompt-actions">
+        <button class="prompt-action-btn use-prompt" title="Use prompt">
+          <i class="fas fa-paper-plane"></i>
+        </button>
+        <button class="prompt-action-btn edit-prompt" title="Edit">
+          <i class="fas fa-pen"></i>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('.prompt-item').forEach(item => {
+    const promptId = item.dataset.id;
+
+    item.querySelector('.use-prompt')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      usePrompt(promptId);
+    });
+
+    item.querySelector('.edit-prompt')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      editPrompt(promptId);
+    });
+
+    item.addEventListener('click', () => {
+      usePrompt(promptId);
+    });
+  });
+}
+
+function openPromptLibrary() {
+  const modal = document.getElementById('promptLibraryModal');
+  if (modal) {
+    modal.classList.remove('hidden');
+    loadPrompts();
+  }
+}
+
+function hidePromptLibrary() {
+  document.getElementById('promptLibraryModal')?.classList.add('hidden');
+}
+
+function openPromptEditor(promptId = null) {
+  const modal = document.getElementById('promptEditorModal');
+  const title = document.getElementById('promptEditorTitle');
+  const titleInput = document.getElementById('promptTitleInput');
+  const categoryInput = document.getElementById('promptCategoryInput');
+  const contentInput = document.getElementById('promptContentInput');
+  const deleteBtn = document.getElementById('deletePromptBtn');
+
+  if (modal) modal.classList.remove('hidden');
+
+  if (promptId) {
+    const prompt = prompts.find(p => p.id === promptId);
+    if (prompt) {
+      editingPromptId = promptId;
+      title.textContent = 'Edit Prompt';
+      titleInput.value = prompt.title;
+      categoryInput.value = prompt.category || 'custom';
+      contentInput.value = prompt.content;
+      deleteBtn.style.display = 'block';
+      deleteBtn.onclick = () => deletePrompt(promptId);
+    }
+  } else {
+    editingPromptId = null;
+    title.textContent = 'New Prompt';
+    titleInput.value = '';
+    categoryInput.value = 'custom';
+    contentInput.value = '';
+    deleteBtn.style.display = 'none';
+  }
+}
+
+function hidePromptEditor() {
+  document.getElementById('promptEditorModal')?.classList.add('hidden');
+  editingPromptId = null;
+}
+
+async function savePrompt() {
+  const titleInput = document.getElementById('promptTitleInput');
+  const categoryInput = document.getElementById('promptCategoryInput');
+  const contentInput = document.getElementById('promptContentInput');
+
+  const title = titleInput.value.trim();
+  const category = categoryInput.value;
+  const content = contentInput.value.trim();
+
+  if (!title || !content) {
+    showToast('Please enter a title and content', 'error', 3000);
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/prompts?token=${token}${asParam()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: {
+          id: editingPromptId,
+          title,
+          category,
+          content,
+          icon: getCategoryIcon(category)
+        }
+      })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      prompts = data.prompts || prompts;
+      renderPrompts();
+      hidePromptEditor();
+      showToast(editingPromptId ? 'Prompt updated' : 'Prompt created', 'success', 2000);
+    }
+  } catch (e) {
+    console.error('Failed to save prompt:', e);
+    showToast('Failed to save prompt', 'error', 3000);
+  }
+}
+
+async function deletePrompt(promptId) {
+  if (!confirm('Are you sure you want to delete this prompt?')) return;
+
+  try {
+    const res = await fetch(`/api/prompts?token=${token}${asParam()}&id=${encodeURIComponent(promptId)}`, {
+      method: 'DELETE'
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      prompts = prompts.filter(p => p.id !== promptId);
+      renderPrompts();
+      hidePromptEditor();
+      showToast('Prompt deleted', 'success', 2000);
+    }
+  } catch (e) {
+    console.error('Failed to delete prompt:', e);
+    showToast('Failed to delete prompt', 'error', 3000);
+  }
+}
+
+function usePrompt(promptId) {
+  const prompt = prompts.find(p => p.id === promptId);
+  if (!prompt) return;
+
+  hidePromptLibrary();
+  switchView('chat');
+
+  // Check if prompt has placeholder
+  if (prompt.content.includes('{topic}')) {
+    const topic = prompt('Enter topic for the prompt:');
+    if (topic) {
+      messageInput.value = prompt.content.replace('{topic}', topic);
+    }
+  } else {
+    messageInput.value = prompt.content;
+  }
+
+  messageInput.focus();
+}
+
+function editPrompt(promptId) {
+  openPromptEditor(promptId);
+}
+
+function getCategoryIcon(category) {
+  const icons = {
+    conversation: 'fa-comments',
+    productivity: 'fa-check-double',
+    creativity: 'fa-lightbulb',
+    code: 'fa-code',
+    writing: 'fa-pen-fancy',
+    research: 'fa-search',
+    custom: 'fa-robot'
+  };
+  return icons[category] || 'fa-robot';
+}
+
+// Wire up prompt library UI
+document.addEventListener('DOMContentLoaded', () => {
+  // Manage prompts button
+  document.getElementById('managePromptsBtn')?.addEventListener('click', openPromptLibrary);
+
+  // Close prompt library
+  document.getElementById('closePromptModal')?.addEventListener('click', hidePromptLibrary);
+  document.getElementById('promptLibraryModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'promptLibraryModal') hidePromptLibrary();
+  });
+
+  // Category filter
+  document.querySelectorAll('.prompt-category-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.prompt-category-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentPromptFilter = btn.dataset.category;
+      renderPrompts();
+    });
+  });
+
+  // Add new prompt
+  document.getElementById('addPromptBtn')?.addEventListener('click', () => {
+    openPromptEditor();
+  });
+
+  // Close prompt editor
+  document.getElementById('closePromptEditor')?.addEventListener('click', hidePromptEditor);
+  document.getElementById('cancelPromptBtn')?.addEventListener('click', hidePromptEditor);
+  document.getElementById('promptEditorModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'promptEditorModal') hidePromptEditor();
+  });
+
+  // Save prompt
+  document.getElementById('savePromptBtn')?.addEventListener('click', savePrompt);
+});
+
 // Command Palette
 const commands = [
   {
@@ -478,6 +736,15 @@ const commands = [
     shortcut: '⌘D',
     category: 'settings',
     action: () => toggleTheme()
+  },
+  {
+    id: 'prompt-library',
+    title: 'Prompt Library',
+    description: 'Manage and use saved prompts',
+    icon: 'fa-bookmark',
+    shortcut: '',
+    category: 'settings',
+    action: () => openPromptLibrary()
   },
   {
     id: 'shortcuts',
@@ -1004,10 +1271,6 @@ document.getElementById('goToKanbanBtn')?.addEventListener('click', () => {
 
 document.getElementById('goToVaultBtn')?.addEventListener('click', () => {
   switchView('vault');
-});
-
-document.getElementById('managePromptsBtn')?.addEventListener('click', () => {
-  showToast('Prompt library coming soon!', 'info', 3000);
 });
 
 // Quick prompts

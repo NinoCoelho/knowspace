@@ -388,6 +388,144 @@ router.delete('/kanban', (req, res) => {
   }
 });
 
+// Prompt Library endpoints
+const PROMPTS_FILE = path.join(os.homedir(), '.knowspace', 'prompts.json');
+
+function getPrompts() {
+  try {
+    if (fs.existsSync(PROMPTS_FILE)) {
+      return JSON.parse(fs.readFileSync(PROMPTS_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.error('Error reading prompts:', e);
+  }
+  // Return default prompts
+  return [
+    {
+      id: 'summarize',
+      title: 'Summarize Conversation',
+      content: 'Summarize our conversation so far, highlighting the key points, decisions made, and any action items.',
+      category: 'conversation',
+      icon: 'fa-align-left'
+    },
+    {
+      id: 'extract-tasks',
+      title: 'Extract Action Items',
+      content: 'Extract all action items and tasks from our discussion and format them as a checklist.',
+      category: 'productivity',
+      icon: 'fa-check-square'
+    },
+    {
+      id: 'brainstorm',
+      title: 'Brainstorm Ideas',
+      content: 'Help me brainstorm ideas for {topic}. Be creative and think outside the box.',
+      category: 'creativity',
+      icon: 'fa-lightbulb'
+    },
+    {
+      id: 'explain-code',
+      title: 'Explain Code',
+      content: 'Explain how this code works, step by step. What does each part do?',
+      category: 'code',
+      icon: 'fa-code'
+    },
+    {
+      id: 'improve-writing',
+      title: 'Improve Writing',
+      content: 'Review and improve this text for clarity, grammar, and style. Preserve the original meaning.',
+      category: 'writing',
+      icon: 'fa-pen-fancy'
+    },
+    {
+      id: 'research',
+      title: 'Research Topic',
+      content: 'Provide an overview of {topic}, including key concepts, important facts, and relevant resources.',
+      category: 'research',
+      icon: 'fa-search'
+    }
+  ];
+}
+
+function savePrompts(prompts) {
+  try {
+    const dir = path.dirname(PROMPTS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(PROMPTS_FILE, JSON.stringify(prompts, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    console.error('Error saving prompts:', e);
+    return false;
+  }
+}
+
+// Get all prompts
+router.get('/prompts', (req, res) => {
+  try {
+    const prompts = getPrompts();
+    res.json({ prompts });
+  } catch (error) {
+    console.error('Error getting prompts:', error);
+    res.status(500).json({ error: 'Failed to get prompts' });
+  }
+});
+
+// Save a prompt
+router.post('/prompts', (req, res) => {
+  const { prompt } = req.body;
+
+  if (!prompt || !prompt.title || !prompt.content) {
+    return res.status(400).json({ error: 'Prompt title and content required' });
+  }
+
+  try {
+    const prompts = getPrompts();
+    const existingIndex = prompts.findIndex(p => p.id === prompt.id);
+
+    if (existingIndex >= 0) {
+      prompts[existingIndex] = { ...prompts[existingIndex], ...prompt };
+    } else {
+      prompts.push({
+        id: prompt.id || Date.now().toString(),
+        title: prompt.title,
+        content: prompt.content,
+        category: prompt.category || 'custom',
+        icon: prompt.icon || 'fa-robot',
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    savePrompts(prompts);
+    res.json({ success: true, prompts });
+  } catch (error) {
+    console.error('Error saving prompt:', error);
+    res.status(500).json({ error: 'Failed to save prompt' });
+  }
+});
+
+// Delete a prompt
+router.delete('/prompts', (req, res) => {
+  const id = req.query.id;
+
+  if (!id) {
+    return res.status(400).json({ error: 'Prompt ID required' });
+  }
+
+  try {
+    const prompts = getPrompts();
+    const filtered = prompts.filter(p => p.id !== id);
+
+    if (filtered.length === prompts.length) {
+      return res.status(404).json({ error: 'Prompt not found' });
+    }
+
+    savePrompts(filtered);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting prompt:', error);
+    res.status(500).json({ error: 'Failed to delete prompt' });
+  }
+});
+
 // Helper functions
 function walkDirectory(basePath, relativePath, files) {
   const fullPath = path.join(basePath, relativePath);

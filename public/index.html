@@ -2132,6 +2132,113 @@
     .suggested-action-btn i {
       font-size: 12px;
     }
+
+    /* Prompt Library */
+    .prompt-category-btn {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-light);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .prompt-category-btn:hover {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+    }
+
+    .prompt-category-btn.active {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .prompt-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .prompt-item:hover {
+      background: var(--bg-primary);
+      border-color: var(--border-light);
+    }
+
+    .prompt-icon {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: var(--bg-secondary);
+      color: var(--accent-primary);
+      flex-shrink: 0;
+    }
+
+    .prompt-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .prompt-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .prompt-preview {
+      font-size: 13px;
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .prompt-actions {
+      display: flex;
+      gap: 8px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .prompt-item:hover .prompt-actions {
+      opacity: 1;
+    }
+
+    .prompt-action-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      border: 1px solid var(--border-light);
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .prompt-action-btn:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .prompt-action-btn.delete:hover {
+      background: #ef4444;
+      border-color: #ef4444;
+    }
   </style>
 </head>
 <body class="h-screen flex">
@@ -2569,6 +2676,88 @@
       <div class="modal-footer">
         <button id="closeShortcutsModalBtn" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">
           Got it
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt Library Modal -->
+  <div id="promptLibraryModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 800px; max-height: 80vh;">
+      <div class="modal-header">
+        <h3><i class="fas fa-bookmark mr-2" style="color: var(--accent-light);"></i>Prompt Library</h3>
+        <div class="flex items-center gap-2">
+          <button id="addPromptBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium text-white" style="background: var(--accent-primary); border: none; cursor: pointer;">
+            <i class="fas fa-plus mr-1"></i>New Prompt
+          </button>
+          <button id="closePromptModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      <div class="modal-body" style="padding: 0;">
+        <!-- Category filter -->
+        <div class="px-4 py-3 border-b" style="border-color: var(--border-light);">
+          <div class="flex items-center gap-2">
+            <button class="prompt-category-btn active text-xs px-3 py-1.5 rounded-full" data-category="all">All</button>
+            <button class="prompt-category-btn text-xs px-3 py-1.5 rounded-full" data-category="conversation">Conversation</button>
+            <button class="prompt-category-btn text-xs px-3 py-1.5 rounded-full" data-category="productivity">Productivity</button>
+            <button class="prompt-category-btn text-xs px-3 py-1.5 rounded-full" data-category="code">Code</button>
+            <button class="prompt-category-btn text-xs px-3 py-1.5 rounded-full" data-category="writing">Writing</button>
+            <button class="prompt-category-btn text-xs px-3 py-1.5 rounded-full" data-category="research">Research</button>
+            <button class="prompt-category-btn text-xs px-3 py-1.5 rounded-full" data-category="custom">Custom</button>
+          </div>
+        </div>
+        <!-- Prompt list -->
+        <div id="promptList" class="p-4" style="max-height: 400px; overflow-y: auto;">
+          <!-- Prompts will be dynamically inserted here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt Editor Modal -->
+  <div id="promptEditorModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3><i class="fas fa-edit mr-2" style="color: var(--accent-light);"></i><span id="promptEditorTitle">New Prompt</span></h3>
+        <button id="closePromptEditor" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Title</label>
+            <input type="text" id="promptTitleInput" class="w-full px-3 py-2 rounded-lg border" placeholder="Prompt title..." style="border-color: var(--border-light); background: var(--bg-primary); color: var(--text-primary);">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Category</label>
+            <select id="promptCategoryInput" class="w-full px-3 py-2 rounded-lg border" style="border-color: var(--border-light); background: var(--bg-primary); color: var(--text-primary);">
+              <option value="conversation">Conversation</option>
+              <option value="productivity">Productivity</option>
+              <option value="creativity">Creativity</option>
+              <option value="code">Code</option>
+              <option value="writing">Writing</option>
+              <option value="research">Research</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1" style="color: var(--text-primary);">Prompt Content</label>
+            <textarea id="promptContentInput" class="w-full px-3 py-2 rounded-lg border" rows="6" placeholder="Enter your prompt... Use {topic} as a placeholder for dynamic content." style="border-color: var(--border-light); background: var(--bg-primary); color: var(--text-primary); resize: vertical;"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="deletePromptBtn" class="px-4 py-2 rounded-lg text-red-600 text-sm font-medium mr-2" style="background: transparent; border: 1px solid #ef4444; cursor: pointer; display: none;">
+          <i class="fas fa-trash mr-1"></i>Delete
+        </button>
+        <button id="cancelPromptBtn" class="px-4 py-2 rounded-lg text-sm font-medium mr-2" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;">
+          Cancel
+        </button>
+        <button id="savePromptBtn" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">
+          Save
         </button>
       </div>
     </div>
