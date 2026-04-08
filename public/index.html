@@ -2048,6 +2048,90 @@
         transform: translateY(10px) scale(0.9);
       }
     }
+
+    /* File Suggestions */
+    #fileSuggestions {
+      animation: fade-in 0.2s ease-out;
+    }
+
+    .file-suggestion-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-light);
+      border-radius: 16px;
+      font-size: 12px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .file-suggestion-chip:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .file-suggestion-chip i {
+      font-size: 11px;
+    }
+
+    .file-suggestion-chip .close-icon {
+      margin-left: 4px;
+      opacity: 0.6;
+    }
+
+    .file-suggestion-chip .close-icon:hover {
+      opacity: 1;
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(-5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Suggested Actions */
+    .suggested-actions {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .suggested-actions-label {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .suggested-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+
+    .suggested-action-btn:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .suggested-action-btn i {
+      font-size: 12px;
+    }
   </style>
 </head>
 <body class="h-screen flex">
@@ -2345,6 +2429,9 @@
                      style="background: var(--bg-secondary);"
                      placeholder="Type a message..." autocomplete="off">
               <div id="autocompleteDropdown" class="hidden absolute bottom-full left-0 right-0 mb-1 rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto z-50" style="background: var(--bg-secondary); border: 1px solid var(--border-light);"></div>
+              <div id="fileSuggestions" class="hidden mt-2 flex flex-wrap gap-2 px-1">
+                <!-- File suggestion chips will be inserted here -->
+              </div>
             </div>
             <button id="sendButton"
                     class="px-6 py-3 rounded-xl text-white font-medium transition-all hover:opacity-90"

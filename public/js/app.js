@@ -256,6 +256,170 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// Context-Aware Suggestions
+let suggestedFiles = new Set();
+const fileMentionPattern = /\[\[([^\]]+)\]\]|@file:([^\s]+)/g;
+
+function analyzeContextForFiles(text) {
+  const mentions = [];
+  let match;
+
+  while ((match = fileMentionPattern.exec(text)) !== null) {
+    const filename = match[1] || match[2];
+    mentions.push(filename.trim());
+  }
+
+  return mentions;
+}
+
+function suggestFiles(filenames) {
+  const container = document.getElementById('fileSuggestions');
+  if (!container) return;
+
+  if (filenames.length === 0) {
+    container.classList.add('hidden');
+    return;
+  }
+
+  container.classList.remove('hidden');
+
+  // Find matching files in vault
+  fetch(`/api/vault?token=${token}${asParam()}`)
+    .then(r => r.json())
+    .then(data => {
+      const files = data.files || [];
+      const matches = filenames.map(name => {
+        const exactMatch = files.find(f => f.path.endsWith(name + '.md') || f.path.endsWith(name + '.markdown'));
+        const fuzzyMatch = files.find(f => f.path.toLowerCase().includes(name.toLowerCase()));
+        return exactMatch || fuzzyMatch;
+      }).filter(f => f && !suggestedFiles.has(f.path));
+
+      if (matches.length > 0) {
+        container.innerHTML = matches.map(file => {
+          const ext = file.path.split('.').pop().toLowerCase();
+          const icon = getFileIcon(ext);
+          const name = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
+          return `
+            <div class="file-suggestion-chip" data-path="${escapeHtml(file.path)}">
+              <i class="fas ${icon}"></i>
+              <span>${escapeHtml(name)}</span>
+              <i class="fas fa-times close-icon" title="Remove"></i>
+            </div>
+          `;
+        }).join('');
+
+        container.querySelectorAll('.file-suggestion-chip').forEach(chip => {
+          chip.addEventListener('click', (e) => {
+            if (e.target.classList.contains('close-icon')) {
+              e.stopPropagation();
+              const path = chip.dataset.path;
+              suggestedFiles.delete(path);
+              chip.remove();
+              if (container.children.length === 0) {
+                container.classList.add('hidden');
+              }
+            } else {
+              // Load the file
+              const path = chip.dataset.path;
+              const file = vaultFiles.find(f => f.path === path);
+              if (file) {
+                loadFile(file);
+                // Add file reference to message input
+                messageInput.value += ` [[${path}]] `;
+                messageInput.focus();
+              }
+            }
+          });
+        });
+
+        matches.forEach(f => suggestedFiles.add(f.path));
+      } else {
+        container.classList.add('hidden');
+      }
+    });
+}
+
+function addSuggestedActions(messageElement, actionType) {
+  if (!messageElement) return;
+
+  const existingActions = messageElement.querySelector('.suggested-actions');
+  if (existingActions) return;
+
+  let actions = [];
+
+  switch (actionType) {
+    case 'task-detection':
+      actions = [
+        { icon: 'fa-plus-circle', label: 'Add to Kanban', prompt: 'Create a kanban card for this task' },
+        { icon: 'fa-calendar-plus', label: 'Set Reminder', prompt: 'Remind me about this' },
+      ];
+      break;
+    case 'file-mention':
+      actions = [
+        { icon: 'fa-folder-open', label: 'Open File', prompt: 'Open the referenced file' },
+        { icon: 'fa-edit', label: 'Edit File', prompt: 'Let me edit this file' },
+      ];
+      break;
+    case 'research':
+      actions = [
+        { icon: 'fa-book', label: 'Learn More', prompt: 'Tell me more about this topic' },
+        { icon: 'fa-link', label: 'Find Sources', prompt: 'Find sources for this information' },
+      ];
+      break;
+    case 'code':
+      actions = [
+        { icon: 'fa-copy', label: 'Copy Code', action: 'copy-code' },
+        { icon: 'fa-play', label: 'Explain Code', prompt: 'Explain how this code works' },
+      ];
+      break;
+  }
+
+  if (actions.length === 0) return;
+
+  const actionsContainer = document.createElement('div');
+  actionsContainer.className = 'suggested-actions';
+  actionsContainer.innerHTML = `
+    <div class="suggested-actions-label">Suggested Actions</div>
+    ${actions.map(a => `
+      <button class="suggested-action-btn" data-action="${a.action || ''}" data-prompt="${a.prompt || ''}">
+        <i class="fas ${a.icon}"></i>
+        <span>${a.label}</span>
+      </button>
+    `).join('')}
+  `;
+
+  actionsContainer.querySelectorAll('.suggested-action-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      const prompt = btn.dataset.prompt;
+
+      if (action === 'copy-code') {
+        const codeBlock = messageElement.querySelector('code');
+        if (codeBlock) {
+          navigator.clipboard.writeText(codeBlock.textContent);
+          showToast('Code copied to clipboard', 'success', 2000);
+        }
+      } else if (prompt) {
+        messageInput.value = prompt;
+        messageInput.focus();
+      }
+    });
+  });
+
+  messageElement.appendChild(actionsContainer);
+}
+
+// Add file mention detection to message input
+messageInput?.addEventListener('input', (e) => {
+  const mentions = analyzeContextForFiles(e.target.value);
+  if (mentions.length > 0) {
+    suggestFiles(mentions);
+  } else {
+    const container = document.getElementById('fileSuggestions');
+    if (container) container.classList.add('hidden');
+  }
+});
+
 // Command Palette
 const commands = [
   {
@@ -2226,6 +2390,19 @@ function addMessage(content, role, timestamp) {
     meta.appendChild(replyBtn);
 
     msgDiv.appendChild(meta);
+  }
+
+  // Add suggested actions for assistant messages
+  if (role === 'assistant' && text) {
+    const contentLower = text.toLowerCase();
+
+    if (contentLower.includes('task') || contentLower.includes('todo') || contentLower.includes('action item')) {
+      addSuggestedActions(msgDiv, 'task-detection');
+    } else if (contentLower.includes('research') || contentLower.includes('study') || contentLower.includes('information about')) {
+      addSuggestedActions(msgDiv, 'research');
+    } else if (text.includes('```')) {
+      addSuggestedActions(msgDiv, 'code');
+    }
   }
 
   renderedMessageCount++;
