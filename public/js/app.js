@@ -2722,6 +2722,80 @@ function loadChatHistory() {
   }
 }
 
+// Parse vault file references into smart clickable links
+function parseVaultLinks(html) {
+  const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
+  const allExts = [...imageExts, 'md', 'markdown', 'txt', 'pdf', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'json', 'csv'];
+  const extPattern = allExts.join('|');
+
+  // 1. Parse obsidian://open?vault=X&file=Y links (including markdown [text](obsidian://...))
+  html = html.replace(/\[([^\]]*)\]\(obsidian:\/\/open\?[^)]*\)/g, (match, linkText) => {
+    const fileParam = match.match(/file=([^&)\s]+)/);
+    if (!fileParam) return match;
+    const filePath = decodeURIComponent(fileParam[1]);
+    return buildSmartFileLink(filePath, linkText);
+  });
+
+  // Plain obsidian:// URLs (not in markdown links)
+  html = html.replace(/(?<![="])obsidian:\/\/open\?(?:vault=[^&]*&?)?file=([^<\s"')\]]+)/g, (match, fileParam) => {
+    const filePath = decodeURIComponent(fileParam);
+    return buildSmartFileLink(filePath);
+  });
+
+  // 2. Parse bare file paths with extensions (not already inside <a> or <code>)
+  html = html.replace(/(?<![="\/\w])([\w][\w\/.-]+\.(?:png|jpe?g|gif|webp|svg|md|markdown|txt|pdf|mp4|webm|mov|mp3|wav|json|csv))(?![^<]*>)(?![\w\/])/gi, (match, filePath) => {
+    // Skip if it's already part of an HTML attribute or inside a tag
+    if (filePath.startsWith('http') || filePath.includes('://')) return match;
+    // Only match if file exists in vault
+    const found = vaultFiles.find(f => f.path === filePath || f.path.endsWith('/' + filePath));
+    if (!found) return match;
+    return buildSmartFileLink(found.path);
+  });
+
+  // 3. Parse `code-wrapped paths`
+  html = html.replace(/<code>([\w\/.-]+\.(?:png|jpe?g|gif|webp|svg|md|markdown|txt|pdf|mp4|webm|mov|mp3|wav|json|csv))<\/code>/gi, (match, filePath) => {
+    const found = vaultFiles.find(f => f.path === filePath || f.path.endsWith('/' + filePath));
+    if (!found) return match;
+    return `<code>${buildSmartFileLink(found.path, filePath.split('/').pop())}</code>`;
+  });
+
+  return html;
+}
+
+function buildSmartFileLink(filePath, displayText) {
+  const found = vaultFiles.find(f => f.path === filePath || f.path.endsWith('/' + filePath));
+  const resolvedPath = found ? found.path : filePath;
+  const ext = resolvedPath.split('.').pop().toLowerCase();
+  const icon = getFileIcon(ext);
+  const name = displayText || resolvedPath.split('/').pop();
+  const folder = resolvedPath.includes('/') ? resolvedPath.substring(0, resolvedPath.lastIndexOf('/')) : '';
+  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+  const exists = !!found;
+
+  let linkHtml;
+  if (exists) {
+    linkHtml = `<a class="smart-file-link" data-vault-path="${escapeHtml(resolvedPath)}" title="Click to open in Knowspace&#10;Right-click for Obsidian">`;
+    linkHtml += `<i class="fas ${icon}"></i>`;
+    linkHtml += `<span>${escapeHtml(name)}</span>`;
+    if (folder && !displayText) linkHtml += `<span class="file-path">${escapeHtml(folder)}</span>`;
+    linkHtml += `</a>`;
+
+    // Inline image preview for image files
+    if (isImage) {
+      const imgUrl = `/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(resolvedPath)}`;
+      linkHtml += `<div class="inline-image-preview" data-vault-path="${escapeHtml(resolvedPath)}"><img src="${imgUrl}" alt="${escapeHtml(name)}" loading="lazy"></div>`;
+    }
+  } else {
+    linkHtml = `<span class="smart-file-link missing" title="File not found in vault">`;
+    linkHtml += `<i class="fas ${icon}"></i>`;
+    linkHtml += `<span>${escapeHtml(name)}</span>`;
+    if (folder) linkHtml += `<span class="file-path">${escapeHtml(folder)}</span>`;
+    linkHtml += `</span>`;
+  }
+
+  return linkHtml;
+}
+
 function addMessage(content, role, timestamp) {
   // Remove typing indicator if present
   showTypingIndicator(false);
@@ -2789,13 +2863,9 @@ function addMessage(content, role, timestamp) {
     html = escapeHtml(text);
   }
 
-  // Append a small open-icon after vault paths in assistant messages (keeps original text intact)
+  // Parse vault file references in assistant messages into smart links
   if (role === 'assistant' && approvals.length === 0) {
-    html = html.replace(/(?:\/?)vault\/([\w\/\-_.]+)/g, (match, filePath) => {
-      // Skip directory paths (ending with /)
-      if (filePath.endsWith('/')) return match;
-      return `${match}<a class="vault-link" data-vault-path="${escapeHtml(filePath)}" href="javascript:void(0)" title="Abrir ${escapeHtml(filePath)}"><i class="fas fa-external-link-alt"></i></a>`;
-    });
+    html = parseVaultLinks(html);
   }
 
   // Add file info for user messages
@@ -2885,6 +2955,28 @@ function addMessage(content, role, timestamp) {
   msgDiv.querySelectorAll('.vault-link').forEach(link => {
     link.addEventListener('click', () => {
       openVaultPreview(link.dataset.vaultPath);
+    });
+  });
+
+  // Wire up smart file links
+  msgDiv.querySelectorAll('.smart-file-link[data-vault-path]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openVaultPreview(link.dataset.vaultPath);
+    });
+    // Allow Obsidian access via right-click (contextmenu copies obsidian URL)
+    link.addEventListener('contextmenu', (e) => {
+      // Let default context menu work — the href/title still shows the obsidian URL
+    });
+  });
+
+  // Wire up inline image previews
+  msgDiv.querySelectorAll('.inline-image-preview').forEach(preview => {
+    preview.addEventListener('click', () => {
+      const path = preview.dataset.vaultPath;
+      const imgUrl = `/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(path)}`;
+      openLightbox(imgUrl, path.split('/').pop());
     });
   });
 

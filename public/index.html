@@ -2306,6 +2306,77 @@
       width: 100%;
       max-width: 500px;
     }
+
+    /* Smart File Links */
+    .smart-file-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      text-decoration: none;
+      transition: all 0.15s;
+      cursor: pointer;
+      border: 1px solid var(--border-light);
+      background: var(--bg-secondary);
+      color: var(--accent-primary);
+      margin: 2px 0;
+    }
+
+    .smart-file-link:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .smart-file-link:hover i {
+      color: white;
+    }
+
+    .smart-file-link i {
+      font-size: 12px;
+      color: var(--accent-light);
+    }
+
+    .smart-file-link .file-path {
+      font-size: 11px;
+      opacity: 0.7;
+    }
+
+    .smart-file-link.missing {
+      color: var(--text-secondary);
+      border-style: dashed;
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .smart-file-link.missing:hover {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border-color: var(--border-light);
+    }
+
+    .inline-image-preview {
+      margin-top: 8px;
+      max-width: 200px;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      border: 1px solid var(--border-light);
+      transition: all 0.2s;
+    }
+
+    .inline-image-preview:hover {
+      border-color: var(--accent-primary);
+      transform: scale(1.02);
+    }
+
+    .inline-image-preview img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
   </style>
 </head>
 <body class="h-screen flex">
