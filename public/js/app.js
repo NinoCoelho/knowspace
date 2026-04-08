@@ -1169,64 +1169,91 @@ async function loadDashboardRecentFiles() {
   const recentContainer = document.getElementById('dashboardRecentFiles');
   if (!recentContainer) return;
 
-  const recentFiles = JSON.parse(localStorage.getItem('ks_recentFiles') || '[]');
-  const uniqueRecent = [...new Set(recentFiles)].slice(0, 5);
+  try {
+    // Fetch vault files and sort by most recently modified
+    const res = await fetch(`/api/vault?token=${token}${asParam()}`);
+    const data = await res.json();
+    const allFiles = data.files || [];
 
-  if (uniqueRecent.length === 0) {
+    // Populate vaultFiles for later use
+    vaultFiles = allFiles.filter(f => {
+      const ext = f.path.split('.').pop().toLowerCase();
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+    });
+
+    // Filter: exclude kanban files, sort by modified date descending
+    const recentFiles = allFiles
+      .filter(f => {
+        const ext = f.path.split('.').pop().toLowerCase();
+        const isSupported = ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+        const isKanban = f.path.startsWith('kanban/');
+        return isSupported && !isKanban;
+      })
+      .sort((a, b) => new Date(b.modified) - new Date(a.modified))
+      .slice(0, 5);
+
+    if (recentFiles.length === 0) {
+      recentContainer.innerHTML = `
+        <div class="text-center py-8" style="color: var(--text-secondary);">
+          <i class="fas fa-file-alt" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
+          <p class="text-sm">No files yet</p>
+        </div>
+      `;
+      return;
+    }
+
+    recentContainer.innerHTML = recentFiles.map(file => {
+      const ext = file.path.split('.').pop().toLowerCase();
+      const icon = getFileIcon(ext);
+      const name = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
+      const folder = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
+
+      return `
+        <div class="recent-file-item" data-path="${escapeHtml(file.path)}">
+          <div class="recent-file-icon">
+            <i class="fas ${icon}"></i>
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 13px; color: var(--text-primary);">${escapeHtml(name)}</div>
+            <div style="font-size: 11px; color: var(--text-secondary);">${folder ? escapeHtml(folder) + ' · ' : ''}${formatRelativeTime(file.modified)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    recentContainer.querySelectorAll('.recent-file-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const path = item.dataset.path;
+        const file = vaultFiles.find(f => f.path === path) || { path };
+        switchView('vault');
+        loadFile(file);
+      });
+    });
+  } catch (e) {
+    console.error('Failed to load recent files:', e);
     recentContainer.innerHTML = `
       <div class="text-center py-8" style="color: var(--text-secondary);">
         <i class="fas fa-file-alt" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
-        <p class="text-sm">No recent files</p>
+        <p class="text-sm">Failed to load files</p>
       </div>
     `;
-    return;
   }
+}
 
-  // Ensure vaultFiles is populated so we can find file objects for loadFile()
-  if (vaultFiles.length === 0) {
-    try {
-      const res = await fetch(`/api/vault?token=${token}${asParam()}`);
-      const data = await res.json();
-      vaultFiles = (data.files || []).filter(f => {
-        const ext = f.path.split('.').pop().toLowerCase();
-        return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
-      });
-    } catch (e) {
-      console.error('Failed to load vault files for dashboard:', e);
-    }
-  }
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return '';
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
 
-  recentContainer.innerHTML = uniqueRecent.map(path => {
-    const file = vaultFiles.find(f => f.path === path);
-    const ext = path.split('.').pop().toLowerCase();
-    const icon = getFileIcon(ext);
-    const name = path.split('/').pop().replace(/\.(md|markdown)$/, '');
-
-    return `
-      <div class="recent-file-item ${file ? '' : 'opacity-50'}" data-path="${escapeHtml(path)}">
-        <div class="recent-file-icon">
-          <i class="fas ${icon}"></i>
-        </div>
-        <div style="flex: 1; min-width: 0;">
-          <div style="font-size: 13px; color: var(--text-primary);">${escapeHtml(name)}</div>
-          <div style="font-size: 11px; color: var(--text-secondary);">${escapeHtml(path)}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  recentContainer.querySelectorAll('.recent-file-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const path = item.dataset.path;
-      const file = vaultFiles.find(f => f.path === path);
-      if (file) {
-        switchView('vault');
-        loadFile(file);
-      } else {
-        showToast('File no longer exists', 'error', 3000);
-      }
-    });
-  });
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return diffMin + 'm ago';
+  if (diffHr < 24) return diffHr + 'h ago';
+  if (diffDay < 7) return diffDay + 'd ago';
+  return date.toLocaleDateString();
 }
 
 function updateAgentStatus() {
@@ -1243,23 +1270,6 @@ function updateAgentStatus() {
     <p class="text-xs mt-2" style="color: var(--text-secondary);">${isProcessing ? 'Your AI assistant is working on a task.' : 'Your AI assistant is ready to help.'}</p>
   `;
 }
-
-// Track recently accessed files
-const originalLoadFile = loadFile;
-loadFile = function(file) {
-  const result = originalLoadFile.call(this, file);
-  if (file && file.path) {
-    const recent = JSON.parse(localStorage.getItem('ks_recentFiles') || '[]');
-    recent.unshift(file.path);
-    const uniqueRecent = [...new Set(recent)].slice(0, 10);
-    localStorage.setItem('ks_recentFiles', JSON.stringify(uniqueRecent));
-
-    if (currentView === 'home') {
-      loadDashboardRecentFiles();
-    }
-  }
-  return result;
-};
 
 // Wire up dashboard buttons
 document.getElementById('goToKanbanBtn')?.addEventListener('click', () => {
