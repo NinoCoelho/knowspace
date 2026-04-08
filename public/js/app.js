@@ -1172,49 +1172,61 @@ async function loadDashboardRecentFiles() {
   const recentFiles = JSON.parse(localStorage.getItem('ks_recentFiles') || '[]');
   const uniqueRecent = [...new Set(recentFiles)].slice(0, 5);
 
-  if (uniqueRecent.length > 0) {
-    const files = await fetch(`/api/vault?token=${token}${asParam()}`)
-      .then(r => r.json())
-      .then(data => (data.files || []))
-      .catch(() => []);
-
-    recentContainer.innerHTML = uniqueRecent.map(path => {
-      const file = files.find(f => f.path === path);
-      const ext = path.split('.').pop().toLowerCase();
-      const icon = getFileIcon(ext);
-      const name = path.split('/').pop().replace(/\.(md|markdown)$/, '');
-
-      return `
-        <div class="recent-file-item" data-path="${escapeHtml(path)}">
-          <div class="recent-file-icon">
-            <i class="fas ${icon}"></i>
-          </div>
-          <div style="flex: 1; min-width: 0;">
-            <div style="font-size: 13px; color: var(--text-primary);">${escapeHtml(name)}</div>
-            <div style="font-size: 11px; color: var(--text-secondary);">${escapeHtml(path)}</div>
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    recentContainer.querySelectorAll('.recent-file-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const path = item.dataset.path;
-        const file = vaultFiles.find(f => f.path === path);
-        if (file) {
-          switchView('vault');
-          loadFile(file);
-        }
-      });
-    });
-  } else {
+  if (uniqueRecent.length === 0) {
     recentContainer.innerHTML = `
       <div class="text-center py-8" style="color: var(--text-secondary);">
         <i class="fas fa-file-alt" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
         <p class="text-sm">No recent files</p>
       </div>
     `;
+    return;
   }
+
+  // Ensure vaultFiles is populated so we can find file objects for loadFile()
+  if (vaultFiles.length === 0) {
+    try {
+      const res = await fetch(`/api/vault?token=${token}${asParam()}`);
+      const data = await res.json();
+      vaultFiles = (data.files || []).filter(f => {
+        const ext = f.path.split('.').pop().toLowerCase();
+        return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+      });
+    } catch (e) {
+      console.error('Failed to load vault files for dashboard:', e);
+    }
+  }
+
+  recentContainer.innerHTML = uniqueRecent.map(path => {
+    const file = vaultFiles.find(f => f.path === path);
+    const ext = path.split('.').pop().toLowerCase();
+    const icon = getFileIcon(ext);
+    const name = path.split('/').pop().replace(/\.(md|markdown)$/, '');
+
+    return `
+      <div class="recent-file-item ${file ? '' : 'opacity-50'}" data-path="${escapeHtml(path)}">
+        <div class="recent-file-icon">
+          <i class="fas ${icon}"></i>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 13px; color: var(--text-primary);">${escapeHtml(name)}</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">${escapeHtml(path)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  recentContainer.querySelectorAll('.recent-file-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const path = item.dataset.path;
+      const file = vaultFiles.find(f => f.path === path);
+      if (file) {
+        switchView('vault');
+        loadFile(file);
+      } else {
+        showToast('File no longer exists', 'error', 3000);
+      }
+    });
+  });
 }
 
 function updateAgentStatus() {
