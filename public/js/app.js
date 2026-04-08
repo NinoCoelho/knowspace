@@ -1182,7 +1182,7 @@ async function loadDashboardRecentFiles() {
     // Populate vaultFiles for later use
     vaultFiles = allFiles.filter(f => {
       const ext = f.path.split('.').pop().toLowerCase();
-      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
     });
 
     // Filter: exclude kanban files, sort by modified date descending
@@ -1394,7 +1394,7 @@ async function openAllFiles() {
     // Re-populate vaultFiles if needed
     vaultFiles = allFiles.filter(f => {
       const ext = f.path.split('.').pop().toLowerCase();
-      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
     });
 
     list.innerHTML = files.map(file => {
@@ -2072,7 +2072,7 @@ function loadVaultSplit() {
   fetch(`/api/vault?token=${token}${asParam()}`).then(r => r.json()).then(data => {
     const files = (data.files || []).filter(f => {
       const ext = f.path.split('.').pop().toLowerCase();
-      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
     });
 
     const treeContainer = document.getElementById('vaultTreeSplit');
@@ -2313,7 +2313,7 @@ socket.on('connect', () => {
       if (vaultFiles.length === 0) {
         vaultFiles = (data.files || []).filter(f => {
           const ext = f.path.split('.').pop().toLowerCase();
-          return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+          return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
         });
       }
     }).catch(() => {});
@@ -3266,7 +3266,7 @@ async function loadVault(autoOpenPath) {
 
     vaultFiles = (data.files || []).filter(f => {
       const ext = f.path.split('.').pop().toLowerCase();
-      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
     });
 
     renderVaultTree();
@@ -3314,7 +3314,7 @@ function buildTree(files, path = '') {
   return tree;
 }
 
-function renderTreeNode(node, container, level) {
+function renderTreeNode(node, container, level, parentPath = '') {
   const sortedKeys = Object.keys(node).sort((a, b) => {
     const aIsFile = node[a].__file;
     const bIsFile = node[b].__file;
@@ -3352,9 +3352,11 @@ function renderTreeNode(node, container, level) {
       container.appendChild(item);
     } else {
       const wrapper = document.createElement('div');
+      const folderPath = parentPath ? parentPath + '/' + key : key;
 
       const item = document.createElement('div');
       item.className = 'vault-item folder';
+      item.dataset.folderPath = folderPath;
 
       const chevron = document.createElement('i');
       chevron.className = 'fas fa-chevron-right chevron';
@@ -3387,10 +3389,13 @@ function renderTreeNode(node, container, level) {
         } else {
           folderIcon.classList.replace('fa-folder', 'fa-folder-open');
         }
+        // Toggle active state on folder
+        document.querySelectorAll('.vault-item.folder').forEach(f => f.classList.remove('active'));
+        if (!isOpen) item.classList.add('active');
       });
 
       wrapper.appendChild(item);
-      renderTreeNode(value, childContainer, level + 1);
+      renderTreeNode(value, childContainer, level + 1, folderPath);
       wrapper.appendChild(childContainer);
       container.appendChild(wrapper);
     }
@@ -3408,7 +3413,13 @@ function getFileIcon(ext) {
     'webp': 'fa-file-image',
     'mp4': 'fa-file-video',
     'webm': 'fa-file-video',
-    'mov': 'fa-file-video'
+    'mov': 'fa-file-video',
+    'mp3': 'fa-file-audio',
+    'wav': 'fa-file-audio',
+    'ogg': 'fa-file-audio',
+    'm4a': 'fa-file-audio',
+    'flac': 'fa-file-audio',
+    'aac': 'fa-file-audio'
   };
   return icons[ext] || 'fa-file';
 }
@@ -3594,6 +3605,67 @@ async function openVaultPreview(filePath) {
   }
 }
 
+// Vault loading helpers
+function showVaultLoading(message) {
+  vaultContent.innerHTML = `
+    <div class="vault-loading">
+      <div class="spinner"></div>
+      <span class="loading-text">${escapeHtml(message || 'Loading...')}</span>
+    </div>
+  `;
+}
+
+function hideVaultLoading() {
+  const loader = vaultContent.querySelector('.vault-loading');
+  if (loader) loader.remove();
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let size = bytes;
+  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+  return size.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+function buildMediaToolbar(info, actions) {
+  return `
+    <div class="media-toolbar">
+      <div class="media-info">${info}</div>
+      <div class="media-actions">${actions}</div>
+    </div>
+  `;
+}
+
+function expandTreePath(filePath) {
+  if (!filePath || !vaultTree || vaultTree.children.length === 0) return;
+
+  const parts = filePath.split('/');
+  // Expand each folder level in the path
+  for (let i = 0; i < parts.length - 1; i++) {
+    const folderPath = parts.slice(0, i + 1).join('/');
+    const folderItem = vaultTree.querySelector(`[data-folder-path="${CSS.escape(folderPath)}"]`);
+    if (folderItem) {
+      const childContainer = folderItem.parentElement.querySelector('.folder-children');
+      if (childContainer && childContainer.classList.contains('hidden')) {
+        childContainer.classList.remove('hidden');
+        const chevron = folderItem.querySelector('.chevron');
+        if (chevron) chevron.classList.add('open');
+        const folderIcon = folderItem.querySelector('.item-icon');
+        if (folderIcon) folderIcon.classList.replace('fa-folder', 'fa-folder-open');
+      }
+    }
+  }
+
+  // Set active state on the file item
+  document.querySelectorAll('.vault-item').forEach(el => el.classList.remove('active'));
+  const fileItem = vaultTree.querySelector(`[data-file-path="${CSS.escape(filePath)}"]`);
+  if (fileItem) {
+    fileItem.classList.add('active');
+  }
+}
+
 async function loadFile(file) {
   try {
     vaultEditing = false;
@@ -3620,10 +3692,14 @@ async function loadFile(file) {
     currentFile = file;
     localStorage.setItem('ks_lastVaultFile', file.path);
 
-    // Update active state
-    document.querySelectorAll('.vault-item.file').forEach(el => {
-      el.classList.toggle('active', el.dataset.filePath === file.path);
-    });
+    // Update active state in tree
+    // If tree is empty, load vault first to populate it
+    if (vaultTree && vaultTree.children.length === 0) {
+      try {
+        await loadVault();
+      } catch (e) {}
+    }
+    expandTreePath(file.path);
 
     // Kanban files: fetch from /api/kanban and render inline
     if (isKanbanFile) {
@@ -3644,12 +3720,127 @@ async function loadFile(file) {
 
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
       const imagePath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
-      vaultContent.innerHTML = `<img src="${imagePath}" alt="${cleanName}" class="max-w-full rounded-lg lightbox-img" data-src="${imagePath}">`;
+      const fileSize = formatFileSize(file.size);
+
+      showVaultLoading('Loading image...');
+
+      const viewer = document.createElement('div');
+      viewer.className = 'media-viewer';
+      viewer.innerHTML = `
+        ${buildMediaToolbar(
+          `<span>${escapeHtml(cleanName)}</span>${fileSize ? ` &middot; <span id="imgDims"></span> &middot; ${fileSize}` : ''}`,
+          `<button class="media-action-btn" id="imgZoomBtn" title="Zoom"><i class="fas fa-search-plus"></i></button>
+           <button class="media-action-btn" id="imgDownloadBtn" title="Download"><i class="fas fa-download"></i></button>`
+        )}
+        <div class="media-content">
+          <img src="${imagePath}" alt="${escapeHtml(cleanName)}" class="lightbox-img" data-src="${imagePath}">
+        </div>
+      `;
+
+      const img = viewer.querySelector('img');
+      img.addEventListener('load', () => {
+        vaultContent.innerHTML = '';
+        vaultContent.appendChild(viewer);
+        const dims = viewer.querySelector('#imgDims');
+        if (dims) dims.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+      });
+      img.addEventListener('error', () => {
+        vaultContent.innerHTML = '<div class="text-center py-8" style="color:var(--text-secondary);"><i class="fas fa-exclamation-triangle" style="font-size:24px;margin-bottom:8px;"></i><p>Failed to load image</p></div>';
+      });
+
+      // Click triggers load — listeners attached after append
+      img.addEventListener('click', () => {
+        if (img.classList.contains('zoomed')) {
+          img.classList.remove('zoomed');
+          document.getElementById('imgZoomBtn')?.classList.remove('active');
+        } else {
+          openLightbox(imagePath, cleanName);
+        }
+      });
+
+      // Pre-attach zoom/download handlers (will work after viewer is in DOM)
+      setTimeout(() => {
+        document.getElementById('imgZoomBtn')?.addEventListener('click', () => {
+          img.classList.toggle('zoomed');
+          document.getElementById('imgZoomBtn')?.classList.toggle('active');
+        });
+        document.getElementById('imgDownloadBtn')?.addEventListener('click', () => {
+          const a = document.createElement('a');
+          a.href = imagePath;
+          a.download = file.path.split('/').pop();
+          a.click();
+        });
+      }, 0);
+
     } else if (['mp4', 'webm', 'mov'].includes(ext)) {
       const videoPath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
-      vaultContent.innerHTML = `<video src="${videoPath}" controls class="max-w-full rounded-lg"></video>`;
+      const fileSize = formatFileSize(file.size);
+
+      showVaultLoading('Loading video...');
+
+      const viewer = document.createElement('div');
+      viewer.className = 'media-viewer';
+      viewer.innerHTML = `
+        ${buildMediaToolbar(
+          `<span>${escapeHtml(cleanName)}</span>${fileSize ? ` &middot; ${fileSize}` : ''}`,
+          `<button class="media-action-btn" id="vidDownloadBtn" title="Download"><i class="fas fa-download"></i></button>`
+        )}
+        <div class="media-content">
+          <video src="${videoPath}" controls></video>
+        </div>
+      `;
+
+      const video = viewer.querySelector('video');
+      video.addEventListener('loadeddata', () => {
+        vaultContent.innerHTML = '';
+        vaultContent.appendChild(viewer);
+      });
+      video.addEventListener('error', () => {
+        vaultContent.innerHTML = '<div class="text-center py-8" style="color:var(--text-secondary);"><i class="fas fa-exclamation-triangle" style="font-size:24px;margin-bottom:8px;"></i><p>Failed to load video</p></div>';
+      });
+
+      setTimeout(() => {
+        document.getElementById('vidDownloadBtn')?.addEventListener('click', () => {
+          const a = document.createElement('a');
+          a.href = videoPath;
+          a.download = file.path.split('/').pop();
+          a.click();
+        });
+      }, 0);
+
+    } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)) {
+      const audioPath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
+      const fileSize = formatFileSize(file.size);
+
+      vaultContent.innerHTML = '';
+      const viewer = document.createElement('div');
+      viewer.className = 'media-viewer';
+      viewer.innerHTML = `
+        ${buildMediaToolbar(
+          `<span><i class="fas fa-music" style="margin-right:6px;color:var(--accent-light);"></i>${escapeHtml(cleanName)}</span>${fileSize ? ` &middot; ${fileSize}` : ''}`,
+          `<button class="media-action-btn" id="audDownloadBtn" title="Download"><i class="fas fa-download"></i></button>`
+        )}
+        <div class="media-content" style="flex-direction:column;gap:16px;">
+          <div style="width:80px;height:80px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;">
+            <i class="fas fa-music" style="font-size:28px;color:var(--accent-light);"></i>
+          </div>
+          <audio src="${audioPath}" controls style="width:100%;max-width:500px;"></audio>
+        </div>
+      `;
+      vaultContent.appendChild(viewer);
+
+      document.getElementById('audDownloadBtn')?.addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.href = audioPath;
+        a.download = file.path.split('/').pop();
+        a.click();
+      });
+
     } else if (ext === 'pdf') {
       const pdfPath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
+
+      showVaultLoading('Loading PDF...');
+
       vaultContent.innerHTML = `<div class="pdf-viewer" id="vaultPdfViewer" data-path="${encodeURIComponent(file.path)}"><div class="pdf-controls"><button id="vpdfPrev"><i class="fas fa-chevron-left"></i></button><span id="vpdfPageInfo">1 / 1</span><button id="vpdfNext"><i class="fas fa-chevron-right"></i></button></div><canvas id="vpdfCanvas"></canvas></div>`;
     } else {
       // Markdown
