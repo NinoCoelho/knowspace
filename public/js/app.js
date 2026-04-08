@@ -1616,7 +1616,7 @@ function renderSessionList() {
   const portalSessions = sessions.filter(s => !s.isSubagent);
 
   portalSessions.forEach(session => {
-    const isActive = session.key === activeSessionKey && currentView === 'chat';
+    const isActive = session.key === activeSessionKey && (currentView === 'chat' || currentView === 'home');
     const div = document.createElement('div');
     div.className = `session-item ${isActive ? 'active' : ''}`;
     const isProcessing = processingSessions.has(session.key);
@@ -1634,8 +1634,8 @@ function renderSessionList() {
     `;
     div.addEventListener('click', (e) => {
       if (e.target.closest('.session-actions')) return;
-      // Switch to chat view if not already there
-      if (currentView !== 'chat') switchView('chat');
+      activeSessionKey = session.key;
+      switchView('chat');
       socket.emit('sessions:switch', { sessionKey: session.key });
     });
     div.querySelector('.rename-session').addEventListener('click', (e) => {
@@ -2213,9 +2213,10 @@ function switchView(view) {
   if (view === 'home') {
     document.getElementById('homeView')?.classList.remove('hidden');
     loadDashboard();
-    // Hide sidebar panels in home view
-    document.getElementById('sidebarChat')?.classList.add('hidden');
+    // Keep chat sidebar visible on home
+    document.getElementById('sidebarChat')?.classList.remove('hidden');
     document.getElementById('sidebarVault')?.classList.add('hidden');
+    renderSessionList();
   } else if (view === 'chat') {
     document.getElementById('chatView')?.classList.remove('hidden');
 
