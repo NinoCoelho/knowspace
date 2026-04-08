@@ -29,7 +29,7 @@ const socket = io('/', {
 });
 
 // State
-let currentView = 'chat';
+let currentView = 'home';
 let vaultFiles = [];
 let currentKanban = null;
 let clientSlug = null;
@@ -2240,7 +2240,11 @@ function switchView(view) {
     renderSessionList();
     const portalSessions = sessions.filter(s => !s.isSubagent);
     if (!activeSessionKey && portalSessions.length > 0) {
+      activeSessionKey = portalSessions[0].key;
       socket.emit('sessions:switch', { sessionKey: portalSessions[0].key });
+    } else if (activeSessionKey) {
+      // Load history for the selected session (needed when switching from home)
+      socket.emit('chat:history', { sessionKey: activeSessionKey });
     } else {
       socket.emit('agent:status');
       const targetMessagesDiv = splitViewEnabled ? document.getElementById('messagesSplit') : messagesDiv;
@@ -4601,16 +4605,23 @@ socket.on('chat:history', (data) => {
     renderSessionList();
   }
 
-  // On initial connect, restore last selected session if different from server's auto-selected
+  // On initial load while on home view, save session but don't render messages
   if (isInitialLoad) {
     isInitialLoad = false;
+    // If user has a saved session preference, switch to it in the background
     const savedKey = localStorage.getItem('ks_lastSessionKey');
     const portalSessions = sessions.filter(s => !s.isSubagent);
     if (savedKey && savedKey !== data.sessionKey && portalSessions.some(s => s.key === savedKey)) {
+      activeSessionKey = savedKey;
       socket.emit('sessions:switch', { sessionKey: savedKey });
-      return; // skip rendering server's auto-selected history; wait for saved session history
+      return;
     }
+    // Still on home — don't render chat messages yet
+    if (currentView === 'home') return;
   }
+
+  // Don't render if not on chat view (avoids showing wrong session)
+  if (currentView !== 'chat') return;
 
   messagesDiv.innerHTML = '';
   if (data.messages && data.messages.length > 0) {
