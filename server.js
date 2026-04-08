@@ -32,6 +32,62 @@ function getVaultBase(clientSlug) {
   }
 }
 
+function resolveVaultRef(vaultBase, refName) {
+  // Try exact match first, then fuzzy
+  const candidates = [];
+
+  function walk(dir, relativePath) {
+    if (!fs.existsSync(dir)) return;
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+      const rel = relativePath ? relativePath + '/' + item : item;
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        walk(fullPath, rel);
+      } else {
+        candidates.push({ path: rel, fullPath });
+      }
+    }
+  }
+
+  walk(vaultBase, '');
+
+  // Match strategies (in priority order):
+  // 1. Exact path match
+  let match = candidates.find(f => f.path === refName);
+  // 2. Exact name (strip extension)
+  if (!match) match = candidates.find(f => f.path === refName + '.md');
+  if (!match) match = candidates.find(f => f.path === refName + '.markdown');
+  if (!match) match = candidates.find(f => f.path === refName + '.txt');
+  // 3. Ends with refName (handles full path without vault prefix)
+  if (!match) match = candidates.find(f => f.path.endsWith(refName));
+  // 4. Filename contains refName
+  if (!match) match = candidates.find(f => {
+    const name = f.path.split('/').pop().replace(/\.(md|markdown|txt)$/, '');
+    return name === refName.replace(/\.(md|markdown|txt)$/, '');
+  });
+  // 5. Fuzzy: refName contains partial match
+  if (!match) match = candidates.find(f => f.path.toLowerCase().includes(refName.toLowerCase()));
+
+  if (!match) return null;
+
+  // Only read text files (limit size to 50KB)
+  const ext = match.path.split('.').pop().toLowerCase();
+  const textExts = ['md', 'markdown', 'txt', 'json', 'csv'];
+  if (!textExts.includes(ext)) {
+    return { path: match.path, content: `[Binary file: ${match.path}]` };
+  }
+
+  const stat = fs.statSync(match.fullPath);
+  if (stat.size > 50 * 1024) {
+    const preview = fs.readFileSync(match.fullPath, 'utf8').slice(0, 10000);
+    return { path: match.path, content: preview + '\n... [truncated, file is ' + Math.round(stat.size / 1024) + 'KB]' };
+  }
+
+  return { path: match.path, content: fs.readFileSync(match.fullPath, 'utf8') };
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
@@ -468,6 +524,26 @@ io.on('connection', async (socket) => {
 
       // Build message with temp file paths
       let messageText = data.message;
+
+      // Resolve #file references — inject vault file content into the message
+      const hashRefs = messageText.match(/#([\w][\w./-]*)/g);
+      if (hashRefs) {
+        const vaultBase = getVaultBase(socket.clientSlug);
+        for (const ref of hashRefs) {
+          const refName = ref.slice(1); // remove #
+          try {
+            // Search for matching file in vault
+            const resolved = resolveVaultRef(vaultBase, refName);
+            if (resolved) {
+              messageText = messageText.replace(ref, '');
+              messageText += `\n\n--- Content of ${resolved.path} ---\n${resolved.content}\n--- End of ${resolved.path} ---`;
+            }
+          } catch (e) {
+            console.log(`[chat] could not resolve #ref ${refName}: ${e.message}`);
+          }
+        }
+      }
+
       if (data.tempFiles && data.tempFiles.length > 0) {
         const fileRefs = data.tempFiles.map(f => {
           return `Attached file: ${f.path} (${formatFileSize(f.size)})`;
