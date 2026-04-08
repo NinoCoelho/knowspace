@@ -85,7 +85,13 @@ async function pollForReply(sessionKey, msgCountBefore, options = {}) {
 
     if (currentStatus !== lastStatus) {
       lastStatus = currentStatus;
-      if (onProgress) onProgress(currentStatus);
+      if (onProgress) onProgress({ status: currentStatus, tools: [] });
+    }
+
+    // Always extract and forward tool activity
+    if (currentStatus === 'executing') {
+      const tools = messages.extractToolActivity(rawHistory);
+      if (tools.length > 0 && onProgress) onProgress({ status: currentStatus, tools });
     }
 
     if (normalizedHistory.length > lastSeenCount) {

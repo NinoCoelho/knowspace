@@ -2384,15 +2384,57 @@ socket.on('agent:status', (data) => {
 // Progress updates from server during long-running agent operations
 const STATUS_LABELS = {
   thinking: 'Agent is thinking...',
-  executing: 'Agent is executing tools...',
+  executing: 'Agent is working...',
 };
+
+const TOOL_ICONS = {
+  Bash: 'fa-terminal',
+  Read: 'fa-file-alt',
+  Write: 'fa-pen',
+  Edit: 'fa-pen',
+  MultiEdit: 'fa-pen',
+  Glob: 'fa-search',
+  Grep: 'fa-search',
+  WebSearch: 'fa-globe',
+  WebFetch: 'fa-download',
+  TaskCreate: 'fa-plus',
+  Agent: 'fa-robot',
+};
+
+let lastToolActivities = [];
 
 socket.on('agent:progress', (data) => {
   const statusEl = document.getElementById('typing-status-text');
   if (statusEl && data.status) {
     statusEl.textContent = STATUS_LABELS[data.status] || `Agent is ${data.status}...`;
   }
+
+  // Show tool activity
+  if (data.tools && data.tools.length > 0) {
+    lastToolActivities = data.tools;
+    renderToolActivity(data.tools);
+  }
 });
+
+function renderToolActivity(tools) {
+  let log = document.getElementById('tool-activity-log');
+  if (!log) {
+    const indicator = document.getElementById('typing-indicator');
+    if (!indicator) return;
+    log = document.createElement('div');
+    log.id = 'tool-activity-log';
+    log.style.cssText = 'margin-top:8px;max-height:120px;overflow-y:auto;';
+    indicator.appendChild(log);
+  }
+
+  log.innerHTML = tools.map(t => {
+    const icon = TOOL_ICONS[t.tool] || 'fa-cog';
+    const preview = t.preview ? `<span style="opacity:0.6;margin-left:4px;">${escapeHtml(t.preview.length > 60 ? t.preview.slice(0, 60) + '...' : t.preview)}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px;color:var(--text-secondary);"><i class="fas ${icon}" style="width:14px;font-size:10px;"></i>${escapeHtml(t.tool)}${preview}</div>`;
+  }).join('');
+
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
 
 let typingElapsedTimer = null;
 
@@ -2574,53 +2616,103 @@ function regenerateMessage() {
 
 // Add reactions to message
 function addReactionsToMessage(msgDiv, role) {
-  // Check if reactions already exist
   if (msgDiv.querySelector('.msg-reactions')) return;
 
-  const reactions = document.createElement('div');
-  reactions.className = 'msg-reactions';
-  reactions.style.cssText = 'display: none; gap: 4px; margin-top: 8px;';
+  const actions = document.createElement('div');
+  actions.className = 'msg-reactions';
+  actions.style.cssText = 'display: none; gap: 4px; margin-top: 8px;';
 
-  const emojis = ['👍', '👎', '🎯', '💡', '❤️'];
+  if (role === 'assistant') {
+    const buttons = [
+      { icon: 'fa-copy', title: 'Copy', action: () => {
+        const text = msgDiv.innerText.trim();
+        navigator.clipboard.writeText(text).then(() => showToast('Copied to clipboard', 'success', 2000));
+      }},
+      { icon: 'fa-redo', title: 'Regenerate', action: () => regenerateMessage() },
+      { icon: 'fa-file-import', title: 'Save to vault', action: () => saveMessageToVault(msgDiv) },
+      { icon: 'fa-columns', title: 'Extract to kanban', action: () => extractMessageToKanban(msgDiv) },
+      { icon: 'fa-bolt', title: 'Go deeper', action: () => {
+        const text = msgDiv.innerText.slice(0, 200);
+        messageInput.value = `Go deeper on this:\n${text}...`;
+        messageInput.focus();
+      }},
+    ];
 
-  emojis.forEach(emoji => {
+    buttons.forEach(({ icon, title, action }) => {
+      const btn = document.createElement('button');
+      btn.className = 'reaction-btn';
+      btn.title = title;
+      btn.innerHTML = `<i class="fas ${icon}"></i>`;
+      btn.style.cssText = 'background: none; border: none; font-size: 13px; cursor: pointer; padding: 4px 6px; border-radius: 4px; transition: all 0.15s; opacity: 0.5; color: var(--text-secondary);';
+      btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; btn.style.color = 'var(--accent-primary)'; });
+      btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.5'; btn.style.color = 'var(--text-secondary)'; });
+      btn.addEventListener('click', (e) => { e.stopPropagation(); action(); });
+      actions.appendChild(btn);
+    });
+  } else {
     const btn = document.createElement('button');
     btn.className = 'reaction-btn';
-    btn.textContent = emoji;
-    btn.style.cssText = 'background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.15s; opacity: 0.6;';
-    btn.addEventListener('mouseenter', () => btn.style.opacity = '1');
-    btn.addEventListener('mouseleave', () => btn.style.opacity = '0.6');
-    btn.addEventListener('click', () => {
-      toggleReaction(msgDiv, emoji, btn);
+    btn.title = 'Copy';
+    btn.innerHTML = '<i class="fas fa-copy"></i>';
+    btn.style.cssText = 'background: none; border: none; font-size: 13px; cursor: pointer; padding: 4px 6px; border-radius: 4px; transition: all 0.15s; opacity: 0.5; color: var(--text-secondary);';
+    btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; btn.style.color = 'var(--accent-primary)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.5'; btn.style.color = 'var(--text-secondary)'; });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(msgDiv.innerText.trim()).then(() => showToast('Copied', 'success', 2000));
     });
-    reactions.appendChild(btn);
-  });
+    actions.appendChild(btn);
+  }
 
-  msgDiv.appendChild(reactions);
-
-  // Show reactions on message hover
-  msgDiv.addEventListener('mouseenter', () => {
-    reactions.style.display = 'flex';
-  });
-
-  msgDiv.addEventListener('mouseleave', () => {
-    // Keep reactions visible if any are selected
-    const selectedReactions = reactions.querySelectorAll('.reaction-btn.selected');
-    if (selectedReactions.length === 0) {
-      reactions.style.display = 'none';
-    }
-  });
+  msgDiv.appendChild(actions);
+  msgDiv.addEventListener('mouseenter', () => { actions.style.display = 'flex'; });
+  msgDiv.addEventListener('mouseleave', () => { actions.style.display = 'none'; });
 }
 
-function toggleReaction(msgDiv, emoji, btn) {
-  btn.classList.toggle('selected');
-  if (btn.classList.contains('selected')) {
-    btn.style.background = 'rgba(139, 94, 60, 0.15)';
-    btn.style.opacity = '1';
-  } else {
-    btn.style.background = 'none';
+async function saveMessageToVault(msgDiv) {
+  const text = msgDiv.innerText.trim();
+  const firstLine = text.split('\n')[0].slice(0, 40).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  const filename = firstLine || 'note';
+  const filePath = `notes/${filename}.md`;
+
+  try {
+    await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(filePath)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text })
+    });
+    showToast(`Saved to vault: ${filePath}`, 'success', 3000);
+    loadVault();
+  } catch (e) {
+    showToast('Failed to save', 'error', 3000);
   }
-  // Note: In a full implementation, this would sync with the server
+}
+
+async function extractMessageToKanban(msgDiv) {
+  const text = msgDiv.innerText.trim();
+  const title = text.split('\n')[0].slice(0, 60);
+
+  try {
+    const res = await fetch(`/api/kanban?token=${token}${asParam()}&file=kanban.md`);
+    const data = await res.json();
+    const kanban = data.kanban || { title: 'Kanban', lanes: [{ id: 'todo', title: 'To Do', cards: [] }] };
+    const todoLane = kanban.lanes.find(l => l.id === 'todo') || kanban.lanes[0];
+
+    todoLane.cards.push({
+      id: Date.now().toString() + Math.random(),
+      title: title,
+      body: text.slice(0, 500)
+    });
+
+    await fetch(`/api/kanban?token=${token}${asParam()}&file=kanban.md`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kanban })
+    });
+    showToast('Added to kanban', 'success', 2000);
+  } catch (e) {
+    showToast('Failed to add to kanban', 'error', 3000);
+  }
 }
 
 // Helper to reload chat history

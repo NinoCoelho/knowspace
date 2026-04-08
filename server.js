@@ -564,7 +564,7 @@ io.on('connection', async (socket) => {
 
       // Poll for the assistant response — emits each reply immediately via onMessage
       const result = await engine.chat.pollForReply(sessionKey, msgCountBefore, {
-        onProgress: (status) => socket.emit('agent:progress', { status }),
+        onProgress: (data) => socket.emit('agent:progress', typeof data === 'string' ? { status: data, tools: [] } : data),
         onMessage: (reply) => socket.emit('chat:message', reply),
         isDisconnected: () => socket.disconnected,
       });

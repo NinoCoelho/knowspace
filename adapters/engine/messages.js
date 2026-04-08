@@ -71,6 +71,37 @@ function isIntermediateMessage(rawMessage) {
   return hasToolUse && !hasText;
 }
 
+/**
+ * Extract tool activity from raw messages for progress display.
+ * Scans the most recent assistant message for tool_use blocks and returns
+ * a summary of what tools are being called.
+ */
+function extractToolActivity(rawMessages) {
+  const tools = [];
+  // Check last few messages for tool_use blocks
+  const recent = (rawMessages || []).slice(-5);
+  for (const m of recent) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    for (const block of m.content) {
+      if (block.type === 'tool_use') {
+        const entry = { tool: block.name || 'unknown' };
+        // Extract useful preview from input
+        if (block.input) {
+          if (block.input.command) entry.preview = block.input.command.slice(0, 80);
+          else if (block.input.file_path) entry.preview = block.input.file_path;
+          else if (block.input.path) entry.preview = block.input.path;
+          else if (block.input.query) entry.preview = block.input.query.slice(0, 80);
+          else if (block.input.url) entry.preview = block.input.url.slice(0, 80);
+          else if (block.input.pattern) entry.preview = block.input.pattern.slice(0, 80);
+          else if (block.input.content) entry.preview = block.input.content.slice(0, 60) + '...';
+        }
+        tools.push(entry);
+      }
+    }
+  }
+  return tools;
+}
+
 module.exports = {
   INTERNAL_MESSAGE_PATTERNS,
   extractMessageText,
@@ -78,4 +109,5 @@ module.exports = {
   normalizeMessages,
   detectAgentStatus,
   isIntermediateMessage,
+  extractToolActivity,
 };
