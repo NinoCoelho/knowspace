@@ -2152,6 +2152,44 @@
       background: #ef4444;
       border-color: #ef4444;
     }
+
+    /* Dashboard List Modal */
+    .dashboard-list-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .dashboard-list-item:hover {
+      background: var(--bg-secondary);
+    }
+
+    .dashboard-list-icon {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      color: var(--accent-primary);
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+
+    .dashboard-list-badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--bg-primary);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-light);
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body class="h-screen flex">
@@ -2701,6 +2739,36 @@
         <button id="savePromptBtn" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">
           Save
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- All Tasks Modal -->
+  <div id="allTasksModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 700px; max-height: 80vh;">
+      <div class="modal-header">
+        <h3><i class="fas fa-tasks mr-2" style="color: var(--accent-light);"></i>All Tasks</h3>
+        <button id="closeAllTasksModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 0; max-height: 60vh; overflow-y: auto;">
+        <div id="allTasksList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- All Recent Files Modal -->
+  <div id="allFilesModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 700px; max-height: 80vh;">
+      <div class="modal-header">
+        <h3><i class="fas fa-clock mr-2" style="color: var(--accent-light);"></i>All Recent Files</h3>
+        <button id="closeAllFilesModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 0; max-height: 60vh; overflow-y: auto;">
+        <div id="allFilesList"></div>
       </div>
     </div>
   </div>

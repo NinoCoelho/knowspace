@@ -162,6 +162,10 @@ function closeAllModals() {
   // Close chat plus menu
   hideChatPlus();
 
+  // Close dashboard modals
+  hideAllTasks();
+  hideAllFiles();
+
   // Close any other overlays
   document.querySelectorAll('.vault-modal-overlay, .lightbox-overlay').forEach(el => el.remove());
 }
@@ -1272,17 +1276,180 @@ function updateAgentStatus() {
 }
 
 // Wire up dashboard buttons
-document.getElementById('goToKanbanBtn')?.addEventListener('click', () => {
-  switchView('vault');
-  // Open the first kanban board in the vault view
-  const kanbanFile = vaultFiles.find(f => f.path.startsWith('kanban/') && f.path.endsWith('.md'));
-  if (kanbanFile) {
-    loadFile(kanbanFile);
-  }
-});
+// All Tasks Modal
+async function openAllTasks() {
+  const modal = document.getElementById('allTasksModal');
+  const list = document.getElementById('allTasksList');
+  if (!modal || !list) return;
 
-document.getElementById('goToVaultBtn')?.addEventListener('click', () => {
-  switchView('vault');
+  modal.classList.remove('hidden');
+  list.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary);"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+
+  try {
+    const res = await fetch(`/api/kanban/list?token=${token}${asParam()}`);
+    const data = await res.json();
+    const boards = data.boards || [];
+    const allTasks = [];
+
+    for (const board of boards) {
+      const boardRes = await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(board.file)}`);
+      const boardData = await boardRes.json();
+      const kanban = boardData.kanban;
+
+      if (kanban && kanban.lanes) {
+        for (const lane of kanban.lanes) {
+          for (const card of lane.cards) {
+            allTasks.push({
+              title: card.title,
+              body: card.body || '',
+              board: board.title,
+              boardFile: board.file,
+              lane: lane.title,
+              hasChecklist: card.body && /- \[ \]/.test(card.body),
+              checkedCount: (card.body?.match(/- \[x\]/gi) || []).length,
+              totalCount: (card.body?.match(/- \[[ x]\]/gi) || []).length,
+              isEmpty: !card.body
+            });
+          }
+        }
+      }
+    }
+
+    if (allTasks.length === 0) {
+      list.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary);"><i class="fas fa-clipboard-list" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i><p class="text-sm">No tasks found</p></div>';
+      return;
+    }
+
+    list.innerHTML = allTasks.map(task => {
+      const statusIcon = task.isEmpty ? 'fa-circle' : (task.hasChecklist ? 'fa-square' : 'fa-check-circle');
+      const statusColor = task.isEmpty ? 'var(--text-secondary)' : (task.hasChecklist ? '#f59e0b' : '#10b981');
+      const progress = task.totalCount > 0 ? `${task.checkedCount}/${task.totalCount}` : '';
+      const preview = task.body ? task.body.replace(/- \[[ x]\] /gi, '').replace(/[#*_`]/g, '').split('\n').filter(l => l.trim()).slice(0, 2).join(' · ') : '';
+
+      return `
+        <div class="dashboard-list-item" data-board-file="${escapeHtml(task.boardFile)}" data-board="${escapeHtml(task.board)}">
+          <div class="dashboard-list-icon" style="color: ${statusColor};">
+            <i class="fas ${statusIcon}"></i>
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 14px; color: var(--text-primary);">${escapeHtml(task.title)}</div>
+            ${preview ? `<div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(preview)}</div>` : ''}
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+            ${progress ? `<span class="dashboard-list-badge">${progress}</span>` : ''}
+            <span class="dashboard-list-badge">${escapeHtml(task.board)}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    list.querySelectorAll('.dashboard-list-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const boardFile = item.dataset.boardFile;
+        hideAllTasks();
+        const vaultPath = 'kanban/' + boardFile;
+        const fileObj = vaultFiles.find(f => f.path === vaultPath) || { path: vaultPath, name: boardFile };
+        switchView('vault');
+        loadFile(fileObj);
+      });
+    });
+  } catch (e) {
+    console.error('Failed to load all tasks:', e);
+    list.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary);"><p class="text-sm">Failed to load tasks</p></div>';
+  }
+}
+
+function hideAllTasks() {
+  document.getElementById('allTasksModal')?.classList.add('hidden');
+}
+
+// All Files Modal
+async function openAllFiles() {
+  const modal = document.getElementById('allFilesModal');
+  const list = document.getElementById('allFilesList');
+  if (!modal || !list) return;
+
+  modal.classList.remove('hidden');
+  list.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary);"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+
+  try {
+    const res = await fetch(`/api/vault?token=${token}${asParam()}`);
+    const data = await res.json();
+    const allFiles = data.files || [];
+
+    const files = allFiles
+      .filter(f => {
+        const ext = f.path.split('.').pop().toLowerCase();
+        const isSupported = ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+        const isKanban = f.path.startsWith('kanban/');
+        return isSupported && !isKanban;
+      })
+      .sort((a, b) => new Date(b.modified) - new Date(a.modified));
+
+    if (files.length === 0) {
+      list.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary);"><i class="fas fa-file-alt" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i><p class="text-sm">No files found</p></div>';
+      return;
+    }
+
+    // Re-populate vaultFiles if needed
+    vaultFiles = allFiles.filter(f => {
+      const ext = f.path.split('.').pop().toLowerCase();
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+    });
+
+    list.innerHTML = files.map(file => {
+      const ext = file.path.split('.').pop().toLowerCase();
+      const icon = getFileIcon(ext);
+      const name = file.path.split('/').pop().replace(/\.(md|markdown)$/, '');
+      const folder = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
+
+      return `
+        <div class="dashboard-list-item" data-path="${escapeHtml(file.path)}">
+          <div class="dashboard-list-icon">
+            <i class="fas ${icon}"></i>
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 14px; color: var(--text-primary);">${escapeHtml(name)}</div>
+            ${folder ? `<div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">${escapeHtml(folder)}</div>` : ''}
+          </div>
+          <span class="dashboard-list-badge">${formatRelativeTime(file.modified)}</span>
+        </div>
+      `;
+    }).join('');
+
+    list.querySelectorAll('.dashboard-list-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const path = item.dataset.path;
+        const file = vaultFiles.find(f => f.path === path) || { path };
+        hideAllFiles();
+        switchView('vault');
+        loadFile(file);
+      });
+    });
+  } catch (e) {
+    console.error('Failed to load all files:', e);
+    list.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary);"><p class="text-sm">Failed to load files</p></div>';
+  }
+}
+
+function hideAllFiles() {
+  document.getElementById('allFilesModal')?.classList.add('hidden');
+}
+
+// Wire up "View all" buttons
+document.getElementById('goToKanbanBtn')?.addEventListener('click', openAllTasks);
+document.getElementById('goToVaultBtn')?.addEventListener('click', openAllFiles);
+
+// Wire up modal close buttons
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('closeAllTasksModal')?.addEventListener('click', hideAllTasks);
+  document.getElementById('allTasksModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'allTasksModal') hideAllTasks();
+  });
+  document.getElementById('closeAllFilesModal')?.addEventListener('click', hideAllFiles);
+  document.getElementById('allFilesModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'allFilesModal') hideAllFiles();
+  });
 });
 
 // Quick prompts
