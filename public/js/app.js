@@ -151,6 +151,7 @@ function hideShortcutsModal() {
 function closeAllModals() {
   hideShortcutsModal();
   hideCommandPalette();
+  hideUnifiedSearch();
   const cardModal = document.getElementById('cardModal');
   if (cardModal) cardModal.classList.add('hidden');
 
@@ -158,9 +159,102 @@ function closeAllModals() {
   const autocomplete = document.getElementById('autocompleteDropdown');
   if (autocomplete) autocomplete.classList.add('hidden');
 
+  // Close FAB menu
+  hideFabMenu();
+
   // Close any other overlays
   document.querySelectorAll('.vault-modal-overlay, .lightbox-overlay').forEach(el => el.remove());
 }
+
+// Quick Actions FAB
+let fabMenuOpen = false;
+
+function toggleFabMenu() {
+  const menu = document.getElementById('fabMenu');
+  const btn = document.getElementById('fabMainBtn');
+
+  fabMenuOpen = !fabMenuOpen;
+
+  if (fabMenuOpen) {
+    menu.classList.remove('hidden');
+    btn.classList.add('active');
+  } else {
+    hideFabMenu();
+  }
+}
+
+function hideFabMenu() {
+  const menu = document.getElementById('fabMenu');
+  const btn = document.getElementById('fabMainBtn');
+
+  if (menu && !menu.classList.contains('hidden')) {
+    menu.classList.add('hidden');
+    menu.style.animation = 'fab-out 0.2s ease-in forwards';
+  }
+
+  if (btn) btn.classList.remove('active');
+  fabMenuOpen = false;
+}
+
+function executeQuickAction(action) {
+  hideFabMenu();
+
+  switch (action) {
+    case 'summarize':
+      switchView('chat');
+      messageInput.value = 'Summarize our conversation so far, highlighting the key points and action items.';
+      messageInput.focus();
+      break;
+    case 'extract-tasks':
+      switchView('chat');
+      messageInput.value = 'Extract all action items and tasks from our discussion and format them as a checklist.';
+      messageInput.focus();
+      break;
+    case 'draft-email':
+      switchView('chat');
+      messageInput.value = 'Draft a professional email based on the context of our conversation. Include a clear subject line and organized content.';
+      messageInput.focus();
+      break;
+    case 'research':
+      switchView('chat');
+      messageInput.value = 'Help me research this topic. Provide an overview, key concepts, and relevant resources.';
+      messageInput.focus();
+      break;
+    case 'generate-diagram':
+      switchView('chat');
+      messageInput.value = 'Generate a mermaid diagram that visualizes the concepts we\'ve been discussing. Use flowchart, sequence, or mindmap syntax as appropriate.';
+      messageInput.focus();
+      break;
+  }
+}
+
+// Wire up FAB button
+document.addEventListener('DOMContentLoaded', () => {
+  const fabMainBtn = document.getElementById('fabMainBtn');
+  if (fabMainBtn) {
+    fabMainBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFabMenu();
+    });
+  }
+
+  // FAB menu items
+  document.querySelectorAll('.fab-menu-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = item.dataset.action;
+      if (action) executeQuickAction(action);
+    });
+  });
+
+  // Close FAB menu when clicking outside
+  document.addEventListener('click', (e) => {
+    const fabContainer = document.getElementById('quickActionsFab');
+    if (fabContainer && !fabContainer.contains(e.target)) {
+      hideFabMenu();
+    }
+  });
+});
 
 // Command Palette
 const commands = [
