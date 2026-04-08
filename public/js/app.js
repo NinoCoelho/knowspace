@@ -409,17 +409,6 @@ function addSuggestedActions(messageElement, actionType) {
   messageElement.appendChild(actionsContainer);
 }
 
-// Add file mention detection to message input
-messageInput?.addEventListener('input', (e) => {
-  const mentions = analyzeContextForFiles(e.target.value);
-  if (mentions.length > 0) {
-    suggestFiles(mentions);
-  } else {
-    const container = document.getElementById('fileSuggestions');
-    if (container) container.classList.add('hidden');
-  }
-});
-
 // Prompt Library
 let prompts = [];
 let currentPromptFilter = 'all';
@@ -1408,6 +1397,17 @@ const messageInput = document.getElementById('messageInput');
 const sendButton = document.getElementById('sendButton');
 const vaultTree = document.getElementById('vaultTree');
 const vaultContent = document.getElementById('vaultContent');
+
+// Add file mention detection to message input
+messageInput?.addEventListener('input', (e) => {
+  const mentions = analyzeContextForFiles(e.target.value);
+  if (mentions.length > 0) {
+    suggestFiles(mentions);
+  } else {
+    const container = document.getElementById('fileSuggestions');
+    if (container) container.classList.add('hidden');
+  }
+});
 const vaultFileName = document.getElementById('vaultFileName');
 const vaultSearch = document.getElementById('vaultSearch');
 const kanbanBoard = document.getElementById('kanbanBoard');
