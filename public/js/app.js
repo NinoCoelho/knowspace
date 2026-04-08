@@ -77,10 +77,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Keyboard Shortcuts System
 const shortcuts = {
+  'cmd+k': () => openCommandPalette(),
   'cmd+1': () => switchView('chat'),
   'cmd+2': () => switchView('vault'),
   'cmd+n': () => { if (currentView === 'chat') socket.emit('sessions:new'); },
-  'cmd+shift+f': () => { switchView('vault'); setTimeout(() => vaultSearch?.focus(), 100); },
+  'cmd+shift+f': () => openUnifiedSearch(),
   'cmd+d': () => toggleTheme(),
   'cmd+/': () => showShortcutsModal(),
   'escape': () => closeAllModals(),
@@ -149,6 +150,7 @@ function hideShortcutsModal() {
 // Close all modals
 function closeAllModals() {
   hideShortcutsModal();
+  hideCommandPalette();
   const cardModal = document.getElementById('cardModal');
   if (cardModal) cardModal.classList.add('hidden');
 
@@ -160,6 +162,422 @@ function closeAllModals() {
   document.querySelectorAll('.vault-modal-overlay, .lightbox-overlay').forEach(el => el.remove());
 }
 
+// Command Palette
+const commands = [
+  {
+    id: 'go-chat',
+    title: 'Go to Chat',
+    description: 'Switch to chat view',
+    icon: 'fa-comment',
+    shortcut: '⌘1',
+    category: 'navigation',
+    action: () => switchView('chat')
+  },
+  {
+    id: 'go-vault',
+    title: 'Go to Vault',
+    description: 'Switch to vault view',
+    icon: 'fa-folder',
+    shortcut: '⌘2',
+    category: 'navigation',
+    action: () => switchView('vault')
+  },
+  {
+    id: 'new-chat',
+    title: 'New Chat',
+    description: 'Start a new conversation',
+    icon: 'fa-plus',
+    shortcut: '⌘N',
+    category: 'actions',
+    action: () => {
+      switchView('chat');
+      socket.emit('sessions:new');
+    }
+  },
+  {
+    id: 'search',
+    title: 'Search',
+    description: 'Search across vault, chat, and kanban',
+    icon: 'fa-search',
+    shortcut: '⇧⌘F',
+    category: 'actions',
+    action: () => openUnifiedSearch()
+  },
+  {
+    id: 'upload-file',
+    title: 'Upload File',
+    description: 'Upload a file to the vault',
+    icon: 'fa-upload',
+    shortcut: '',
+    category: 'actions',
+    action: () => uploadBtn?.click()
+  },
+  {
+    id: 'toggle-theme',
+    title: 'Toggle Dark Mode',
+    description: 'Switch between light and dark theme',
+    icon: 'fa-moon',
+    shortcut: '⌘D',
+    category: 'settings',
+    action: () => toggleTheme()
+  },
+  {
+    id: 'shortcuts',
+    title: 'Keyboard Shortcuts',
+    description: 'View all keyboard shortcuts',
+    icon: 'fa-keyboard',
+    shortcut: '⌘/',
+    category: 'settings',
+    action: () => showShortcutsModal()
+  }
+];
+
+let commandPaletteVisible = false;
+let selectedCommandIndex = -1;
+let filteredCommands = [];
+
+function openCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  const input = document.getElementById('commandInput');
+  if (palette && input) {
+    palette.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+    commandPaletteVisible = true;
+    filteredCommands = [...commands];
+    selectedCommandIndex = -1;
+    renderCommands('');
+  }
+}
+
+function hideCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  if (palette) {
+    palette.classList.add('hidden');
+    commandPaletteVisible = false;
+    selectedCommandIndex = -1;
+  }
+}
+
+function renderCommands(query) {
+  const list = document.getElementById('commandList');
+  if (!list) return;
+
+  if (!query) {
+    // Group by category
+    const grouped = commands.reduce((acc, cmd) => {
+      if (!acc[cmd.category]) acc[cmd.category] = [];
+      acc[cmd.category].push(cmd);
+      return acc;
+    }, {});
+
+    const categoryOrder = { navigation: 1, actions: 2, settings: 3 };
+    const sortedCategories = Object.keys(grouped).sort((a, b) =>
+      (categoryOrder[a] || 99) - (categoryOrder[b] || 99)
+    );
+
+    filteredCommands = commands;
+    selectedCommandIndex = -1;
+
+    list.innerHTML = sortedCategories.map(category => {
+      const categoryLabels = {
+        navigation: 'Navigation',
+        actions: 'Actions',
+        settings: 'Settings'
+      };
+      return `
+        <div class="command-section">
+          <div class="command-section-title">${categoryLabels[category] || category}</div>
+          ${grouped[category].map(cmd => renderCommandItem(cmd)).join('')}
+        </div>
+      `;
+    }).join('');
+  } else {
+    // Filter commands
+    const q = query.toLowerCase();
+    filteredCommands = commands.filter(cmd =>
+      cmd.title.toLowerCase().includes(q) ||
+      cmd.description.toLowerCase().includes(q)
+    );
+
+    selectedCommandIndex = -1;
+
+    if (filteredCommands.length === 0) {
+      list.innerHTML = '<div class="no-results">No commands found</div>';
+    } else {
+      list.innerHTML = filteredCommands.map(cmd => renderCommandItem(cmd)).join('');
+    }
+  }
+}
+
+function renderCommandItem(cmd) {
+  return `
+    <div class="command-item" data-id="${cmd.id}">
+      <div class="command-item-icon">
+        <i class="fas ${cmd.icon}"></i>
+      </div>
+      <div class="command-item-info">
+        <div class="command-item-title">${escapeHtml(cmd.title)}</div>
+        <div class="command-item-desc">${escapeHtml(cmd.description)}</div>
+      </div>
+      ${cmd.shortcut ? `<kbd class="command-item-shortcut">${cmd.shortcut}</kbd>` : ''}
+    </div>
+  `;
+}
+
+function executeCommand(command) {
+  if (command && command.action) {
+    try {
+      command.action();
+    } catch (err) {
+      console.error('Command error:', err);
+    }
+  }
+  hideCommandPalette();
+}
+
+function selectNextCommand() {
+  if (filteredCommands.length === 0) return;
+  selectedCommandIndex = (selectedCommandIndex + 1) % filteredCommands.length;
+  updateCommandSelection();
+}
+
+function selectPreviousCommand() {
+  if (filteredCommands.length === 0) return;
+  selectedCommandIndex = selectedCommandIndex <= 0 ? filteredCommands.length - 1 : selectedCommandIndex - 1;
+  updateCommandSelection();
+}
+
+function updateCommandSelection() {
+  document.querySelectorAll('.command-item').forEach((item, index) => {
+    item.classList.toggle('selected', index === selectedCommandIndex);
+  });
+  // Scroll selected into view
+  const selected = document.querySelector('.command-item.selected');
+  if (selected) {
+    selected.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function getSelectedCommand() {
+  if (selectedCommandIndex >= 0 && selectedCommandIndex < filteredCommands.length) {
+    return filteredCommands[selectedCommandIndex];
+  }
+  return null;
+}
+
+// Unified Search
+let unifiedSearchVisible = false;
+
+function openUnifiedSearch() {
+  const modal = document.getElementById('unifiedSearchModal');
+  const input = document.getElementById('unifiedSearchInput');
+  if (modal && input) {
+    modal.classList.remove('hidden');
+    input.value = '';
+    input.focus();
+    unifiedSearchVisible = true;
+  }
+}
+
+function hideUnifiedSearch() {
+  const modal = document.getElementById('unifiedSearchModal');
+  if (modal) {
+    modal.classList.add('hidden');
+    unifiedSearchVisible = false;
+  }
+}
+
+async function performUnifiedSearch(query) {
+  const resultsDiv = document.getElementById('searchResults');
+  if (!resultsDiv || !query.trim()) {
+    if (resultsDiv) resultsDiv.innerHTML = '<div class="search-placeholder"><i class="fas fa-search" style="font-size: 32px; opacity: 0.3; margin-bottom: 12px;"></i><p>Type to search across all your content</p></div>';
+    return;
+  }
+
+  resultsDiv.innerHTML = '<div style="display: flex; justify-content: center; padding: 40px;"><i class="fas fa-circle-notch fa-spin" style="font-size: 24px; color: var(--accent-primary);"></i></div>';
+
+  const results = {
+    vault: [],
+    chat: [],
+    kanban: []
+  };
+
+  // Search vault
+  try {
+    const vaultRes = await fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(query)}`);
+    const vaultData = await vaultRes.json();
+    results.vault = (vaultData.results || []).map(f => ({
+      type: 'vault',
+      id: f.path,
+      title: f.path.split('/').pop(),
+      path: f.path,
+      preview: 'Vault file'
+    }));
+  } catch (e) {}
+
+  // Search chat (search in current messages)
+  const chatMessages = Array.from(document.querySelectorAll('.message.assistant .prose, .message.user'))
+    .filter(el => el.textContent.toLowerCase().includes(query.toLowerCase()));
+
+  results.chat = chatMessages.map((el, i) => ({
+    type: 'chat',
+    id: `chat-${i}`,
+    title: 'Message',
+    preview: el.textContent.substring(0, 200) + '...',
+    element: el
+  }));
+
+  // Search kanban cards
+  try {
+    const kanbanRes = await fetch(`/api/kanban/list?token=${token}${asParam()}`);
+    const kanbanData = await kanbanRes.json();
+    const boards = kanbanData.boards || [];
+
+    for (const board of boards) {
+      const boardRes = await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(board.file)}`);
+      const boardData = await boardRes.json();
+      const kanban = boardData.kanban;
+
+      if (kanban && kanban.lanes) {
+        for (const lane of kanban.lanes) {
+          for (const card of lane.cards) {
+            const cardText = `${card.title} ${card.body || ''}`.toLowerCase();
+            if (cardText.includes(query.toLowerCase())) {
+              results.kanban.push({
+                type: 'kanban',
+                id: `${board.file}-${card.id}`,
+                title: card.title,
+                board: board.title,
+                lane: lane.title,
+                preview: card.body?.substring(0, 100) || '',
+                file: board.file
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  renderSearchResults(results);
+}
+
+function renderSearchResults(results) {
+  const resultsDiv = document.getElementById('searchResults');
+  if (!resultsDiv) return;
+
+  const hasResults = results.vault.length > 0 || results.chat.length > 0 || results.kanban.length > 0;
+
+  if (!hasResults) {
+    resultsDiv.innerHTML = '<div class="search-no-results"><i class="fas fa-search-minus" style="font-size: 32px; opacity: 0.3; margin-bottom: 12px;"></i><p>No results found</p></div>';
+    return;
+  }
+
+  let html = '';
+
+  if (results.vault.length > 0) {
+    html += '<div class="search-section-title">Vault Files</div>';
+    results.vault.forEach(item => {
+      html += `
+        <div class="search-result-item" data-type="vault" data-path="${escapeHtml(item.path)}">
+          <div class="search-result-header">
+            <div class="search-result-icon"><i class="fas fa-file-alt"></i></div>
+            <div class="search-result-title">${escapeHtml(item.title)}</div>
+            <span class="search-result-type vault">Vault</span>
+          </div>
+          <div class="search-result-preview">${escapeHtml(item.path)}</div>
+        </div>
+      `;
+    });
+  }
+
+  if (results.chat.length > 0) {
+    html += '<div class="search-section-title">Chat Messages</div>';
+    results.chat.forEach((item, i) => {
+      html += `
+        <div class="search-result-item" data-type="chat" data-index="${i}">
+          <div class="search-result-header">
+            <div class="search-result-icon"><i class="fas fa-comment"></i></div>
+            <div class="search-result-title">Message</div>
+            <span class="search-result-type chat">Chat</span>
+          </div>
+          <div class="search-result-preview">${escapeHtml(item.preview)}</div>
+        </div>
+      `;
+    });
+  }
+
+  if (results.kanban.length > 0) {
+    html += '<div class="search-section-title">Kanban Cards</div>';
+    results.kanban.forEach(item => {
+      html += `
+        <div class="search-result-item" data-type="kanban" data-file="${escapeHtml(item.file)}">
+          <div class="search-result-header">
+            <div class="search-result-icon"><i class="fas fa-columns"></i></div>
+            <div class="search-result-title">${escapeHtml(item.title)}</div>
+            <span class="search-result-type kanban">Kanban</span>
+          </div>
+          <div class="search-result-meta">${escapeHtml(item.board)} • ${escapeHtml(item.lane)}</div>
+          <div class="search-result-preview">${escapeHtml(item.preview)}</div>
+        </div>
+      `;
+    });
+  }
+
+  resultsDiv.innerHTML = html;
+
+  // Add click handlers
+  resultsDiv.querySelectorAll('.search-result-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const type = item.dataset.type;
+      if (type === 'vault') {
+        const path = item.dataset.path;
+        const file = vaultFiles.find(f => f.path === path);
+        if (file) {
+          switchView('vault');
+          loadFile(file);
+        }
+      } else if (type === 'chat') {
+        // Scroll to the message
+        const index = parseInt(item.dataset.index);
+        const chatMsg = results.chat[index].element;
+        if (chatMsg) {
+          chatMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          chatMsg.style.animation = 'highlight 2s ease';
+        }
+      } else if (type === 'kanban') {
+        const file = item.dataset.file;
+        currentKanbanFile = file;
+        loadKanban();
+      }
+      hideUnifiedSearch();
+    });
+  });
+}
+
+// Wire up unified search modal
+const searchInput = document.getElementById('unifiedSearchInput');
+let searchTimeout = null;
+
+searchInput?.addEventListener('input', (e) => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    performUnifiedSearch(e.target.value);
+  }, 300);
+});
+
+searchInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    hideUnifiedSearch();
+  }
+});
+
+document.getElementById('closeSearchModal')?.addEventListener('click', hideUnifiedSearch);
+document.getElementById('unifiedSearchModal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'unifiedSearchModal') hideUnifiedSearch();
+});
+
 // Wire up shortcuts modal close buttons
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('closeShortcutsModal')?.addEventListener('click', hideShortcutsModal);
@@ -168,6 +586,42 @@ document.addEventListener('DOMContentLoaded', () => {
   // Close modal on overlay click
   document.getElementById('shortcutsModal')?.addEventListener('click', (e) => {
     if (e.target.id === 'shortcutsModal') hideShortcutsModal();
+  });
+
+  // Command Palette
+  const commandInput = document.getElementById('commandInput');
+  const commandPalette = document.getElementById('commandPalette');
+
+  commandInput?.addEventListener('input', (e) => {
+    renderCommands(e.target.value);
+    selectedCommandIndex = -1;
+  });
+
+  commandInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectNextCommand();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectPreviousCommand();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const cmd = getSelectedCommand();
+      if (cmd) {
+        executeCommand(cmd);
+      }
+    }
+  });
+
+  commandPalette?.addEventListener('click', (e) => {
+    const item = e.target.closest('.command-item');
+    if (item) {
+      const id = item.dataset.id;
+      const cmd = commands.find(c => c.id === id);
+      executeCommand(cmd);
+    } else if (e.target.id === 'commandPalette') {
+      hideCommandPalette();
+    }
   });
 
   // Register global keyboard handler
@@ -591,6 +1045,195 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
+// Split View
+let splitViewEnabled = localStorage.getItem('ks_splitView') === 'true';
+let splitPanelWidth = 50; // percentage for chat panel
+
+function toggleSplitView() {
+  splitViewEnabled = !splitViewEnabled;
+  localStorage.setItem('ks_splitView', splitViewEnabled);
+  updateSplitView();
+
+  if (splitViewEnabled) {
+    showToast('Split view enabled', 'info', 2000);
+    // Initialize split vault panel
+    loadVaultSplit();
+  } else {
+    showToast('Split view disabled', 'info', 2000);
+  }
+}
+
+function updateSplitView() {
+  const splitContainer = document.getElementById('splitViewContainer');
+  const chatView = document.getElementById('chatView');
+  const vaultView = document.getElementById('vaultView');
+
+  if (!splitContainer || !chatView || !vaultView) return;
+
+  if (splitViewEnabled) {
+    splitContainer.classList.remove('hidden');
+    chatView.classList.add('hidden');
+    vaultView.classList.add('hidden');
+
+    // Update toggle button text
+    const toggleBtn = document.getElementById('splitViewToggle');
+    const toggleBtnSplit = document.getElementById('splitViewToggleSplit');
+    if (toggleBtn) {
+      toggleBtn.innerHTML = '<i class="fas fa-columns mr-1"></i>Split View (Active)';
+      toggleBtn.style.background = 'var(--accent-primary)';
+      toggleBtn.style.color = 'white';
+    }
+    if (toggleBtnSplit) {
+      toggleBtnSplit.innerHTML = '<i class="fas fa-times mr-1"></i>Close Split';
+    }
+
+    // Sync messages to split view
+    const messagesSplit = document.getElementById('messagesSplit');
+    if (messagesSplit && messagesDiv) {
+      messagesSplit.innerHTML = messagesDiv.innerHTML;
+    }
+  } else {
+    splitContainer.classList.add('hidden');
+    chatView.classList.remove('hidden');
+    vaultView.classList.toggle('hidden', currentView !== 'vault');
+
+    // Update toggle button
+    const toggleBtn = document.getElementById('splitViewToggle');
+    if (toggleBtn) {
+      toggleBtn.innerHTML = '<i class="fas fa-columns mr-1"></i>Split View';
+      toggleBtn.style.background = '';
+      toggleBtn.style.color = '';
+    }
+  }
+}
+
+function loadVaultSplit() {
+  fetch(`/api/vault?token=${token}${asParam()}`).then(r => r.json()).then(data => {
+    const files = (data.files || []).filter(f => {
+      const ext = f.path.split('.').pop().toLowerCase();
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].includes(ext);
+    });
+
+    const treeContainer = document.getElementById('vaultTreeSplit');
+    if (!treeContainer) return;
+
+    // Build simple tree
+    const tree = buildTree(files);
+
+    function renderTreeNode(node, container, level = 0) {
+      const sortedKeys = Object.keys(node).sort((a, b) => {
+        const aIsFile = node[a].__file;
+        const bIsFile = node[b].__file;
+        if (aIsFile === bIsFile) return a.localeCompare(b);
+        return aIsFile ? 1 : -1;
+      });
+
+      sortedKeys.forEach(key => {
+        const value = node[key];
+        const isFile = value.__file;
+
+        if (isFile) {
+          const item = document.createElement('div');
+          item.className = 'vault-item file';
+          item.style.padding = '4px 8px';
+          item.style.borderRadius = '4px';
+          item.style.cursor = 'pointer';
+
+          const ext = key.split('.').pop().toLowerCase();
+          const icon = getFileIcon(ext);
+          const cleanName = key.replace(/\.(md|markdown)$/, '');
+
+          item.innerHTML = `
+            <i class="fas ${icon}" style="color: var(--accent-light); font-size: 12px; margin-right: 6px;"></i>
+            <span style="font-size: 12px;">${escapeHtml(cleanName)}</span>
+          `;
+
+          item.addEventListener('click', () => loadFileSplit(value.__file));
+          container.appendChild(item);
+        } else {
+          const wrapper = document.createElement('div');
+
+          const item = document.createElement('div');
+          item.className = 'vault-item folder';
+          item.style.padding = '4px 8px';
+          item.style.borderRadius = '4px';
+          item.style.cursor = 'pointer';
+          item.style.fontWeight = '500';
+
+          const chevron = document.createElement('i');
+          chevron.className = 'fas fa-chevron-right';
+          chevron.style.fontSize = '9px';
+          chevron.style.marginRight = '6px';
+          chevron.style.transition = 'transform 0.2s';
+
+          item.innerHTML = `
+            <i class="fas fa-folder" style="color: var(--accent-light); font-size: 12px; margin-right: 6px;"></i>
+            <span style="font-size: 12px;">${escapeHtml(key)}</span>
+          `;
+          item.prepend(chevron);
+
+          const childContainer = document.createElement('div');
+          childContainer.className = 'folder-children';
+          childContainer.style.marginLeft = '12px';
+
+          let isOpen = level === 0;
+
+          item.addEventListener('click', () => {
+            isOpen = !isOpen;
+            childContainer.classList.toggle('hidden', !isOpen);
+            chevron.style.transform = isOpen ? 'rotate(90deg)' : '0deg';
+          });
+
+          if (level === 0) {
+            chevron.style.transform = 'rotate(90deg)';
+          }
+
+          wrapper.appendChild(item);
+          renderTreeNode(value, childContainer, level + 1);
+          wrapper.appendChild(childContainer);
+          container.appendChild(wrapper);
+        }
+      });
+    }
+
+    treeContainer.innerHTML = '';
+    renderTreeNode(tree, treeContainer);
+  }).catch(console.error);
+}
+
+function loadFileSplit(file) {
+  fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(file.path)}`)
+    .then(r => r.text())
+    .then(content => {
+      const contentDiv = document.getElementById('vaultContentSplit');
+      if (!contentDiv) return;
+
+      const ext = file.path.split('.').pop().toLowerCase();
+
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+        const imagePath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
+        contentDiv.innerHTML = `<img src="${imagePath}" alt="${file.path}" class="max-w-full rounded-lg lightbox-img" data-src="${imagePath}">`;
+      } else if (typeof marked !== 'undefined') {
+        contentDiv.innerHTML = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
+        applyMarkdownEnhancements(contentDiv);
+      } else {
+        contentDiv.innerHTML = `<pre style="white-space:pre-wrap;">${escapeHtml(content)}</pre>`;
+      }
+    });
+}
+
+// Wire up split view toggle buttons
+document.getElementById('splitViewToggle')?.addEventListener('click', toggleSplitView);
+document.getElementById('splitViewToggleSplit')?.addEventListener('click', toggleSplitView);
+
+// Initialize split view on load
+document.addEventListener('DOMContentLoaded', () => {
+  updateSplitView();
+  if (splitViewEnabled) {
+    loadVaultSplit();
+  }
+});
+
 function switchView(view) {
   currentView = view;
 
@@ -599,13 +1242,38 @@ function switchView(view) {
     item.classList.toggle('active', item.dataset.view === view);
   });
 
-  // Show/hide main content views
-  document.getElementById('chatView').classList.toggle('hidden', view !== 'chat');
-  document.getElementById('vaultView').classList.toggle('hidden', view !== 'vault');
+  // Handle split view
+  if (splitViewEnabled) {
+    // Split view is active, keep it and sync content
+    document.getElementById('splitViewContainer').classList.remove('hidden');
+    document.getElementById('chatView').classList.add('hidden');
+    document.getElementById('vaultView').classList.add('hidden');
 
-  // Show/hide sidebar panels
-  document.getElementById('sidebarChat').classList.toggle('hidden', view !== 'chat');
-  document.getElementById('sidebarVault').classList.toggle('hidden', view !== 'vault');
+    // Sync messages to split view if in chat view
+    if (view === 'chat') {
+      const messagesSplit = document.getElementById('messagesSplit');
+      if (messagesSplit && messagesDiv) {
+        messagesSplit.innerHTML = messagesDiv.innerHTML;
+      }
+      // Update sidebar
+      document.getElementById('sidebarChat').classList.remove('hidden');
+      document.getElementById('sidebarVault').classList.add('hidden');
+    } else if (view === 'vault') {
+      // Update sidebar
+      document.getElementById('sidebarChat').classList.add('hidden');
+      document.getElementById('sidebarVault').classList.remove('hidden');
+      loadVaultSplit();
+    }
+  } else {
+    // Normal view mode
+    document.getElementById('splitViewContainer').classList.add('hidden');
+    document.getElementById('chatView').classList.toggle('hidden', view !== 'chat');
+    document.getElementById('vaultView').classList.toggle('hidden', view !== 'vault');
+
+    // Show/hide sidebar panels
+    document.getElementById('sidebarChat').classList.toggle('hidden', view !== 'chat');
+    document.getElementById('sidebarVault').classList.toggle('hidden', view !== 'vault');
+  }
 
   // Update session list active highlight
   if (view === 'chat') {
@@ -617,7 +1285,8 @@ function switchView(view) {
     } else {
       // Re-check agent status and scroll to bottom
       socket.emit('agent:status');
-      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      const targetMessagesDiv = splitViewEnabled ? document.getElementById('messagesSplit') : messagesDiv;
+      if (targetMessagesDiv) targetMessagesDiv.scrollTop = targetMessagesDiv.scrollHeight;
     }
   }
 
@@ -831,6 +1500,162 @@ function parseApprovalRequest(text) {
   return matches;
 }
 
+// Edit message functionality
+let editingMessageDiv = null;
+let editingOriginalText = '';
+
+function editMessage(msgDiv, text) {
+  if (editingMessageDiv) {
+    cancelEditMessage();
+  }
+
+  editingMessageDiv = msgDiv;
+  editingOriginalText = text;
+
+  // Replace message content with textarea
+  const contentDiv = msgDiv.querySelector('.message') || msgDiv;
+  contentDiv.innerHTML = `
+    <textarea class="message-edit-textarea" style="width: 100%; min-height: 60px; padding: 12px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-chat); color: var(--text-primary); resize: vertical; font-family: inherit; font-size: 14px; line-height: 1.5;">${escapeHtml(text)}</textarea>
+    <div class="edit-actions mt-2 flex gap-2">
+      <button class="msg-action-btn save-edit" style="background: var(--accent-primary); color: white;">Save</button>
+      <button class="msg-action-btn cancel-edit">Cancel</button>
+    </div>
+  `;
+
+  const textarea = contentDiv.querySelector('textarea');
+  textarea.focus();
+
+  contentDiv.querySelector('.save-edit').addEventListener('click', () => saveEditMessage());
+  contentDiv.querySelector('.cancel-edit').addEventListener('click', cancelEditMessage);
+
+  // Handle Enter key (save) and Shift+Enter (new line)
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      saveEditMessage();
+    } else if (e.key === 'Escape') {
+      cancelEditMessage();
+    }
+  });
+}
+
+function saveEditMessage() {
+  if (!editingMessageDiv) return;
+
+  const textarea = editingMessageDiv.querySelector('textarea');
+  if (!textarea) return;
+
+  const newText = textarea.value.trim();
+  if (newText !== editingOriginalText) {
+    // Remove the old message and add the edited one
+    const allMessages = messagesDiv.querySelectorAll('.message.user, .message.assistant, .subagent-event');
+    let found = false;
+    for (let i = 0; i < allMessages.length; i++) {
+      if (allMessages[i] === editingMessageDiv) {
+        // Replace this message's content
+        const textSpan = editingMessageDiv.querySelector('.message') || editingMessageDiv;
+        textSpan.innerHTML = escapeHtml(newText);
+        found = true;
+        break;
+      }
+    }
+
+    // Send the edited message
+    socket.emit('chat:message', {
+      message: newText,
+      messageId: Date.now().toString() + '-edit',
+      tempFiles: []
+    });
+
+    showToast('Message edited', 'success', 2000);
+  }
+
+  editingMessageDiv = null;
+  editingOriginalText = '';
+  loadChatHistory(); // Reload to get proper state
+}
+
+function cancelEditMessage() {
+  if (!editingMessageDiv) return;
+
+  // Restore original content
+  const textSpan = editingMessageDiv.querySelector('.message') || editingMessageDiv;
+  textSpan.innerHTML = escapeHtml(editingOriginalText);
+
+  editingMessageDiv = null;
+  editingOriginalText = '';
+}
+
+function regenerateMessage() {
+  // Regenerate the last assistant message
+  showToast('Regenerating response...', 'info', 2000);
+
+  // Send a regeneration request (special message)
+  socket.emit('chat:message', {
+    message: 'Please regenerate your last response.',
+    messageId: Date.now().toString() + '-regen',
+    tempFiles: []
+  });
+}
+
+// Add reactions to message
+function addReactionsToMessage(msgDiv, role) {
+  // Check if reactions already exist
+  if (msgDiv.querySelector('.msg-reactions')) return;
+
+  const reactions = document.createElement('div');
+  reactions.className = 'msg-reactions';
+  reactions.style.cssText = 'display: none; gap: 4px; margin-top: 8px;';
+
+  const emojis = ['👍', '👎', '🎯', '💡', '❤️'];
+
+  emojis.forEach(emoji => {
+    const btn = document.createElement('button');
+    btn.className = 'reaction-btn';
+    btn.textContent = emoji;
+    btn.style.cssText = 'background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.15s; opacity: 0.6;';
+    btn.addEventListener('mouseenter', () => btn.style.opacity = '1');
+    btn.addEventListener('mouseleave', () => btn.style.opacity = '0.6');
+    btn.addEventListener('click', () => {
+      toggleReaction(msgDiv, emoji, btn);
+    });
+    reactions.appendChild(btn);
+  });
+
+  msgDiv.appendChild(reactions);
+
+  // Show reactions on message hover
+  msgDiv.addEventListener('mouseenter', () => {
+    reactions.style.display = 'flex';
+  });
+
+  msgDiv.addEventListener('mouseleave', () => {
+    // Keep reactions visible if any are selected
+    const selectedReactions = reactions.querySelectorAll('.reaction-btn.selected');
+    if (selectedReactions.length === 0) {
+      reactions.style.display = 'none';
+    }
+  });
+}
+
+function toggleReaction(msgDiv, emoji, btn) {
+  btn.classList.toggle('selected');
+  if (btn.classList.contains('selected')) {
+    btn.style.background = 'rgba(139, 94, 60, 0.15)';
+    btn.style.opacity = '1';
+  } else {
+    btn.style.background = 'none';
+  }
+  // Note: In a full implementation, this would sync with the server
+}
+
+// Helper to reload chat history
+function loadChatHistory() {
+  if (activeSessionKey) {
+    socket.emit('chat:history', { sessionKey: activeSessionKey });
+  }
+}
+
 function addMessage(content, role, timestamp) {
   // Remove typing indicator if present
   showTypingIndicator(false);
@@ -964,8 +1789,31 @@ function addMessage(content, role, timestamp) {
     });
     actions.appendChild(dlBtn);
 
+    // Edit button for user messages
+    if (role === 'user') {
+      const editBtn = document.createElement('button');
+      editBtn.className = 'msg-action-btn';
+      editBtn.title = 'Edit';
+      editBtn.innerHTML = '<i class="fas fa-pen"></i>';
+      editBtn.addEventListener('click', () => editMessage(msgDiv, text));
+      actions.appendChild(editBtn);
+    }
+
+    // Regenerate button for assistant messages
+    if (role === 'assistant') {
+      const regenBtn = document.createElement('button');
+      regenBtn.className = 'msg-action-btn';
+      regenBtn.title = 'Regenerate';
+      regenBtn.innerHTML = '<i class="fas fa-redo"></i>';
+      regenBtn.addEventListener('click', () => regenerateMessage());
+      actions.appendChild(regenBtn);
+    }
+
     msgDiv.appendChild(actions);
   }
+
+  // Add reaction emojis to messages
+  addReactionsToMessage(msgDiv, role);
 
   // Wire up vault links to open preview popup
   msgDiv.querySelectorAll('.vault-link').forEach(link => {
@@ -1162,6 +2010,131 @@ document.getElementById('chatUploadBtn').addEventListener('click', () => {
     }
   };
   input.click();
+});
+
+// Split view chat elements
+const messageInputSplit = document.getElementById('messageInputSplit');
+const sendButtonSplit = document.getElementById('sendButtonSplit');
+const chatUploadBtnSplit = document.getElementById('chatUploadBtnSplit');
+const chatFilePreviewSplit = document.getElementById('chatFilePreviewSplit');
+const messagesSplit = document.getElementById('messagesSplit');
+const autocompleteDropdownSplit = document.getElementById('autocompleteDropdownSplit');
+
+// Wire up split view chat
+sendButtonSplit?.addEventListener('click', () => {
+  // Temporarily use split view input
+  const originalInput = messageInput;
+  const originalMessages = messagesDiv;
+  const originalFilePreview = document.getElementById('chatFilePreview');
+  const originalAutocomplete = document.getElementById('autocompleteDropdown');
+
+  // Swap references
+  messageInput.value = messageInputSplit.value;
+  pendingFiles = []; // Reset for split view
+
+  // Use original sendMessage
+  sendMessage();
+
+  // Copy message back to split view
+  messageInputSplit.value = messageInput.value;
+  pendingFiles = [];
+});
+
+chatUploadBtnSplit?.addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+
+  input.onchange = async (e) => {
+    const files = Array.from(e.target.files);
+    for (const file of files) {
+      await uploadTempFile(file);
+    }
+    renderFilePreviewSplit();
+  };
+  input.click();
+});
+
+function renderFilePreviewSplit() {
+  if (!chatFilePreviewSplit) return;
+  chatFilePreviewSplit.innerHTML = '';
+
+  if (pendingFiles.length === 0) {
+    chatFilePreviewSplit.classList.add('hidden');
+    return;
+  }
+
+  chatFilePreviewSplit.classList.remove('hidden');
+  pendingFiles.forEach((file, index) => {
+    const div = document.createElement('div');
+    div.className = 'file-preview';
+    div.title = file.name;
+
+    if (file.type && file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file.blob || new Blob([]));
+      img.onload = () => URL.revokeObjectURL(img.src);
+      div.appendChild(img);
+    } else {
+      div.innerHTML = `<i class="fas fa-file file-icon"></i>`;
+    }
+
+    const removeBtn = document.createElement('div');
+    removeBtn.className = 'remove-btn';
+    removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    removeBtn.onclick = () => {
+      pendingFiles.splice(index, 1);
+      renderFilePreviewSplit();
+    };
+
+    div.appendChild(removeBtn);
+    chatFilePreviewSplit.appendChild(div);
+  });
+}
+
+// Enter key support for split view input
+messageInputSplit?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendButtonSplit.click();
+  }
+});
+
+// Vault search in split view
+const vaultSearchSplit = document.getElementById('vaultSearchSplit');
+vaultSearchSplit?.addEventListener('input', (e) => {
+  const query = e.target.value.toLowerCase();
+  const treeContainer = document.getElementById('vaultTreeSplit');
+  if (!treeContainer) return;
+
+  if (!query) {
+    loadVaultSplit(); // Reload full tree
+    return;
+  }
+
+  // Simple filename search
+  fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(query)}`)
+    .then(r => r.json())
+    .then(data => {
+      const results = data.results || [];
+      treeContainer.innerHTML = '';
+      results.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'vault-item file';
+        item.style.padding = '4px 8px';
+        item.style.borderRadius = '4px';
+        item.style.cursor = 'pointer';
+
+        const ext = f.path.split('.').pop().toLowerCase();
+        const icon = getFileIcon(ext);
+        item.innerHTML = `
+          <i class="fas ${icon}" style="color: var(--accent-light); font-size: 12px; margin-right: 6px;"></i>
+          <span style="font-size: 12px;">${escapeHtml(f.path)}</span>
+        `;
+        item.addEventListener('click', () => loadFileSplit(f));
+        treeContainer.appendChild(item);
+      });
+    });
 });
 
 // Upload file to temp directory
@@ -1878,6 +2851,40 @@ uploadBtn.addEventListener('click', () => {
     }
   };
   
+  input.click();
+});
+
+// Split view vault upload
+document.getElementById('uploadBtnSplit')?.addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.md,.markdown,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mov';
+
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`/api/vault/upload?token=${token}${asParam()}`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (res.ok) {
+        showToast('File uploaded successfully!', 'success');
+        loadVaultSplit();
+      } else {
+        showToast('Upload failed', 'error');
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+      showToast('Upload failed', 'error');
+    }
+  };
+
   input.click();
 });
 
