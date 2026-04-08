@@ -333,6 +333,24 @@ function applyMarkdownEnhancements(container) {
     } catch (e) {}
   }
 
+  // Render #hashtags as clickable chips
+  container.querySelectorAll('p, li, span:not(.tag-chip):not(.hljs):not(.mermaid)').forEach(el => {
+    if (el.closest('.tag-chip') || el.closest('pre') || el.closest('code')) return;
+    el.innerHTML = el.innerHTML.replace(/#([a-zA-Z][a-zA-Z0-9_-]*)/g, (match, tag) => {
+      return `<span class="tag-chip" data-tag="${tag.toLowerCase()}">#${tag}</span>`;
+    });
+  });
+  container.querySelectorAll('.tag-chip').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const tag = chip.dataset.tag;
+      vaultSearch.value = '#' + tag;
+      onVaultSearchInput({ target: vaultSearch });
+      switchView('vault');
+    });
+  });
+
   // Image lightbox
   container.querySelectorAll('img.lightbox-img').forEach(img => {
     img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
@@ -1651,41 +1669,54 @@ function initPdfViewer(container) {
 }
 
 // Search
-vaultSearch.addEventListener('input', (e) => {
-  const query = e.target.value.toLowerCase();
+async function onVaultSearchInput(e) {
+  const rawQuery = e.target.value;
+  const query = rawQuery.toLowerCase();
 
   if (!query) {
     renderVaultTree();
     return;
   }
 
-  const filtered = vaultFiles.filter(f =>
-    f.path.toLowerCase().includes(query)
-  );
-
   vaultTree.innerHTML = '';
-  filtered.forEach(file => {
+
+  // Tag or content search: delegate to server
+  if (rawQuery.startsWith('#') || query.includes('#')) {
+    try {
+      const res = await fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(rawQuery)}`);
+      const data = await res.json();
+      const results = data.results || [];
+      if (results.length === 0) {
+        vaultTree.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:13px;">No files found for tag: ' + escapeHtml(rawQuery) + '</div>';
+      }
+      results.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'vault-item file';
+        if (currentFile && currentFile.path === f.path) item.classList.add('active');
+        const ext = f.path.split('.').pop().toLowerCase();
+        item.innerHTML = `<i class="fas ${getFileIcon(ext)}" style="color: var(--accent-light); font-size: 14px;"></i><span class="text-sm">${escapeHtml(f.path)}</span>`;
+        item.addEventListener('click', (ev) => { ev.stopPropagation(); loadFile(f); });
+        vaultTree.appendChild(item);
+      });
+    } catch (err) { console.error('[vault] search error:', err); }
+    return;
+  }
+
+  // Local filename fuzzy search (substring match, case-insensitive)
+  const results = vaultFiles.filter(f => f.path.toLowerCase().includes(query));
+
+  results.forEach(f => {
     const item = document.createElement('div');
     item.className = 'vault-item file';
-
-    // Add active class for current file
-    if (currentFile && currentFile.path === file.path) {
-      item.classList.add('active');
-    }
-
-    const ext = file.path.split('.').pop().toLowerCase();
-    item.innerHTML = `
-      <i class="fas ${getFileIcon(ext)}" style="color: var(--accent-light); font-size: 14px;"></i>
-      <span class="text-sm">${file.path}</span>
-    `;
-    item.addEventListener('click', (e) => {
-      e.stopPropagation();
-      loadFile(file);
-    });
+    if (currentFile && currentFile.path === f.path) item.classList.add('active');
+    const ext = f.path.split('.').pop().toLowerCase();
+    item.innerHTML = `<i class="fas ${getFileIcon(ext)}" style="color: var(--accent-light); font-size: 14px;"></i><span class="text-sm">${escapeHtml(f.path)}</span>`;
+    item.addEventListener('click', (ev) => { ev.stopPropagation(); loadFile(f); });
     vaultTree.appendChild(item);
   });
-});
+}
 
+vaultSearch.addEventListener('input', onVaultSearchInput);
 // Upload
 uploadBtn.addEventListener('click', () => {
   const input = document.createElement('input');

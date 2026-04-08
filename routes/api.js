@@ -196,28 +196,108 @@ router.post('/vault/move', (req, res) => {
   }
 });
 
+// Get all tags across vault files
+router.get('/vault/tags', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const vaultPath = getVaultBase(clientSlug);
+
+  const textExts = ['.md', '.markdown', '.txt'];
+
+  try {
+    const tagIndex = {}; // tag -> [{path, preview}]
+
+    function indexFile(filePath) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const tags = content.match(/#([a-zA-Z][a-zA-Z0-9_-]*)/g) || [];
+        if (tags.length === 0) return;
+
+        const cleanPath = filePath.replace(vaultPath + path.sep, '');
+        const preview = content.replace(/^#.*$/gm, '').replace(/[#*_`[\]]/g, '').trim().slice(0, 120);
+
+        tags.forEach(tag => {
+          const normalized = tag.slice(1).toLowerCase();
+          if (!tagIndex[normalized]) tagIndex[normalized] = [];
+          tagIndex[normalized].push({ path: cleanPath, preview });
+        });
+      } catch (e) {}
+    }
+
+    function walkTags(basePath, relativePath) {
+      const fullPath = path.join(basePath, relativePath);
+      if (!fs.existsSync(fullPath)) return;
+      const items = fs.readdirSync(fullPath);
+      items.forEach(item => {
+        const itemPath = path.join(fullPath, item);
+        const itemRelative = path.join(relativePath, item);
+        const stats = fs.statSync(itemPath);
+        if (stats.isDirectory()) {
+          walkTags(basePath, itemRelative);
+        } else {
+          const ext = path.extname(item).toLowerCase();
+          if (textExts.includes(ext)) indexFile(itemPath);
+        }
+      });
+    }
+
+    walkTags(vaultPath, '');
+    res.json({ tags: tagIndex });
+  } catch (error) {
+    console.error('Error indexing tags:', error);
+    res.status(500).json({ error: 'Failed to index tags' });
+  }
+});
+
 // Search vault files
 router.get('/vault/search', (req, res) => {
   const clientSlug = req.clientSlug;
   const query = req.query.q;
-  
+
   if (!query) {
     return res.status(400).json({ error: 'Search query required' });
   }
-  
+
   const vaultPath = getVaultBase(clientSlug);
   const files = [];
+  const textExts = ['.md', '.markdown', '.txt'];
 
   try {
     walkDirectory(vaultPath, '', files);
-    
-    // Use Fuse.js for fuzzy search
-    const fuse = new Fuse(files, {
-      keys: ['path'],
-      threshold: 0.4
+
+    // Read content for all text files (for tag + content search)
+    const filesWithContent = files.map(f => {
+      if (!textExts.includes(path.extname(f.path).toLowerCase())) return f;
+      try {
+        const fullPath = path.join(vaultPath, f.path);
+        const content = fs.readFileSync(fullPath, 'utf8');
+        return { ...f, content };
+      } catch {
+        return f;
+      }
     });
-    
-    const results = fuse.search(query).map(result => result.item);
+
+    // Tag query: #something
+    if (query.startsWith('#')) {
+      const tag = query.slice(1).toLowerCase();
+      const tagPattern = new RegExp(`#${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      const matched = filesWithContent.filter(f => f.content && tagPattern.test(f.content));
+      const results = matched.map(f => ({ path: f.path, size: f.size, modified: f.modified }));
+      return res.json({ results });
+    }
+
+    // Fuzzy search on path + content
+    const fuse = new Fuse(filesWithContent, {
+      keys: ['path', 'content'],
+      threshold: 0.4,
+      includeScore: true,
+      shouldSort: true
+    });
+
+    const results = fuse.search(query).map(result => ({
+      path: result.item.path,
+      size: result.item.size,
+      modified: result.item.modified
+    }));
     res.json({ results });
   } catch (error) {
     console.error('Error searching vault:', error);
