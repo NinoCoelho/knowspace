@@ -44,6 +44,136 @@ const processingSessions = new Set();
 let renderedMessageCount = 0; // tracks how many messages are currently displayed
 let backgroundPollTimer = null;
 
+// Theme Management
+let currentTheme = localStorage.getItem('ks_theme') || 'light';
+
+function applyTheme(theme) {
+  currentTheme = theme;
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('ks_theme', theme);
+
+  const themeIcon = document.getElementById('themeIcon');
+  if (themeIcon) {
+    themeIcon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+  }
+}
+
+function toggleTheme() {
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  applyTheme(newTheme);
+  showToast(`${newTheme === 'dark' ? 'Dark' : 'Light'} mode enabled`, 'info', 2000);
+}
+
+// Initialize theme on load
+applyTheme(currentTheme);
+
+// Theme toggle button
+document.addEventListener('DOMContentLoaded', () => {
+  const themeToggleBtn = document.getElementById('themeToggle');
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener('click', toggleTheme);
+  }
+});
+
+// Keyboard Shortcuts System
+const shortcuts = {
+  'cmd+1': () => switchView('chat'),
+  'cmd+2': () => switchView('vault'),
+  'cmd+n': () => { if (currentView === 'chat') socket.emit('sessions:new'); },
+  'cmd+shift+f': () => { switchView('vault'); setTimeout(() => vaultSearch?.focus(), 100); },
+  'cmd+d': () => toggleTheme(),
+  'cmd+/': () => showShortcutsModal(),
+  'escape': () => closeAllModals(),
+};
+
+function parseShortcut(e) {
+  const parts = [];
+  if (e.metaKey || e.ctrlKey) parts.push('cmd');
+  if (e.shiftKey) parts.push('shift');
+  if (e.altKey) parts.push('alt');
+  if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.key !== 'Escape') parts.push(e.key.toLowerCase());
+  else parts.push(e.key.toLowerCase());
+
+  return parts.join('+');
+}
+
+function handleKeyboardShortcut(e) {
+  // Don't trigger shortcuts when typing in input fields
+  const target = e.target;
+  const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.contentEditable === 'true';
+  const isAutocomplete = target.closest('#autocompleteDropdown') !== null;
+
+  // Allow Enter for sending messages even in input
+  if (e.key === 'Enter' && !e.shiftKey && target === messageInput && !isAutocomplete) {
+    return; // Let the existing handler deal with it
+  }
+
+  // Allow Escape in inputs to clear or close dropdowns
+  if (e.key === 'Escape' && isInput && !isAutocomplete) {
+    return;
+  }
+
+  // Skip if in input field (except for shortcuts that should work in inputs)
+  if (isInput && !['escape', 'cmd+k', 'cmd+shift+f'].includes(parseShortcut(e))) {
+    return;
+  }
+
+  const shortcut = parseShortcut(e);
+  const handler = shortcuts[shortcut];
+
+  if (handler) {
+    e.preventDefault();
+    try {
+      handler();
+    } catch (err) {
+      console.error('Shortcut error:', err);
+    }
+  }
+}
+
+// Keyboard shortcuts help modal
+function showShortcutsModal() {
+  const modal = document.getElementById('shortcutsModal');
+  if (modal) {
+    modal.classList.remove('hidden');
+  }
+}
+
+function hideShortcutsModal() {
+  const modal = document.getElementById('shortcutsModal');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+// Close all modals
+function closeAllModals() {
+  hideShortcutsModal();
+  const cardModal = document.getElementById('cardModal');
+  if (cardModal) cardModal.classList.add('hidden');
+
+  // Close autocomplete dropdown
+  const autocomplete = document.getElementById('autocompleteDropdown');
+  if (autocomplete) autocomplete.classList.add('hidden');
+
+  // Close any other overlays
+  document.querySelectorAll('.vault-modal-overlay, .lightbox-overlay').forEach(el => el.remove());
+}
+
+// Wire up shortcuts modal close buttons
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('closeShortcutsModal')?.addEventListener('click', hideShortcutsModal);
+  document.getElementById('closeShortcutsModalBtn')?.addEventListener('click', hideShortcutsModal);
+
+  // Close modal on overlay click
+  document.getElementById('shortcutsModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'shortcutsModal') hideShortcutsModal();
+  });
+
+  // Register global keyboard handler
+  document.addEventListener('keydown', handleKeyboardShortcut);
+});
+
 // Append ?as=<slug> to API calls when admin has switched to another client
 function asParam() {
   return activeClientSlug ? `&as=${activeClientSlug}` : '';
@@ -278,8 +408,8 @@ function renderMarkdown(content, container) {
           // Try searching
           fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(pageName)}`).then(r => r.json()).then(data => {
             if (data.results && data.results[0]) loadFile(data.results[0]);
-            else alert('Page not found: ' + pageName);
-          }).catch(() => alert('Page not found: ' + pageName));
+            else showToast('Page not found: ' + pageName, 'warning');
+          }).catch(() => showToast('Page not found: ' + pageName, 'warning'));
         }
       });
     });
@@ -369,8 +499,8 @@ function applyMarkdownEnhancements(container) {
       else {
         fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(pageName)}`).then(r => r.json()).then(data => {
           if (data.results && data.results[0]) loadFile(data.results[0]);
-          else alert('Page not found: ' + pageName);
-        }).catch(() => alert('Page not found: ' + pageName));
+          else showToast('Page not found: ' + pageName, 'warning');
+        }).catch(() => showToast('Page not found: ' + pageName, 'warning'));
       }
     });
   });
@@ -1060,7 +1190,7 @@ async function uploadTempFile(file) {
     }
   } catch (error) {
     console.error('Upload failed:', error);
-    alert('Failed to upload file');
+    showToast('Failed to upload file', 'error');
   }
 }
 
@@ -1380,7 +1510,7 @@ async function openVaultPreview(filePath) {
 
   if (!file) {
     console.error('[vault] file not found:', filePath, 'vaultFiles count:', vaultFiles.length);
-    alert('File not found: ' + filePath);
+    showToast('File not found: ' + filePath, 'error');
     return;
   }
 
@@ -1737,14 +1867,14 @@ uploadBtn.addEventListener('click', () => {
       });
       
       if (res.ok) {
-        alert('File uploaded successfully!');
+        showToast('File uploaded successfully!', 'success');
         loadVault();
       } else {
-        alert('Upload failed');
+        showToast('Upload failed', 'error');
       }
     } catch (error) {
       console.error('Upload failed:', error);
-      alert('Upload failed');
+      showToast('Upload failed', 'error');
     }
   };
   
@@ -1783,6 +1913,94 @@ function enableInteractiveCheckboxes(container, onChange) {
 let vaultEditing = false;
 let vaultOriginalContent = '';
 let kanbanViewMode = 'kanban'; // 'kanban' | 'md'
+let autosaveTimeout = null;
+let isSaving = false;
+
+// Autosave function with debouncing
+function scheduleAutosave() {
+  if (!vaultEditing || !currentFile) return;
+
+  // Clear existing timeout
+  clearTimeout(autosaveTimeout);
+
+  // Show "Saving..." indicator
+  showAutosaveStatus('saving');
+
+  // Schedule save after 2 seconds of inactivity
+  autosaveTimeout = setTimeout(async () => {
+    await autosaveVault();
+  }, 2000);
+}
+
+// Perform the actual autosave
+async function autosaveVault() {
+  if (!vaultEditing || !currentFile || isSaving) return;
+
+  const textarea = document.querySelector('.vault-editor');
+  if (!textarea) return;
+
+  isSaving = true;
+  const content = textarea.value;
+
+  try {
+    const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    });
+
+    if (res.ok) {
+      showAutosaveStatus('saved');
+      // Clear "Saved" status after 3 seconds
+      setTimeout(() => {
+        if (!isSaving) hideAutosaveStatus();
+      }, 3000);
+    } else {
+      showAutosaveStatus('error');
+    }
+  } catch (error) {
+    console.error('Autosave failed:', error);
+    showAutosaveStatus('error');
+  } finally {
+    isSaving = false;
+  }
+}
+
+// Show autosave status indicator
+function showAutosaveStatus(status) {
+  const indicator = document.getElementById('autosaveIndicator');
+  const text = document.getElementById('autosaveText');
+  if (!indicator || !text) return;
+
+  indicator.classList.remove('hidden', 'saved');
+
+  switch (status) {
+    case 'saving':
+      text.textContent = 'Saving...';
+      break;
+    case 'saved':
+      indicator.classList.add('saved');
+      text.textContent = 'Saved';
+      break;
+    case 'error':
+      text.textContent = 'Save failed';
+      text.style.color = '#ef4444';
+      break;
+  }
+}
+
+// Hide autosave status indicator
+function hideAutosaveStatus() {
+  const indicator = document.getElementById('autosaveIndicator');
+  if (indicator) {
+    indicator.classList.add('hidden');
+    indicator.classList.remove('saved');
+  }
+  const text = document.getElementById('autosaveText');
+  if (text) {
+    text.style.color = '';
+  }
+}
 
 document.getElementById('vaultEditBtn').addEventListener('click', async () => {
   if (!currentFile) return;
@@ -1790,16 +2008,12 @@ document.getElementById('vaultEditBtn').addEventListener('click', async () => {
   if (!['md', 'markdown', 'txt', 'json', 'csv'].includes(ext)) return;
 
   if (vaultEditing) {
-    // Save
-    const textarea = document.querySelector('.vault-editor');
-    if (textarea) {
-      await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: textarea.value })
-      });
-    }
+    // Save and exit edit mode
+    await autosaveVault(); // Save any pending changes
     vaultEditing = false;
+    clearTimeout(autosaveTimeout);
+    hideAutosaveStatus();
+
     const isKanbanFileSave = currentFile && (currentFile.path.startsWith('kanban/') || currentFile.path.includes('/kanban/'));
     if (isKanbanFileSave && kanbanViewMode === 'md') {
       renderKanbanFileView();
@@ -1819,6 +2033,19 @@ document.getElementById('vaultEditBtn').addEventListener('click', async () => {
     textarea.value = vaultOriginalContent;
     vaultContent.appendChild(textarea);
     textarea.focus();
+
+    // Set up autosave on input
+    textarea.addEventListener('input', () => {
+      scheduleAutosave();
+    });
+
+    // Save on Ctrl/Cmd + S
+    textarea.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        autosaveVault();
+      }
+    });
   }
   updateVaultEditBtn();
 });
@@ -1915,7 +2142,7 @@ document.getElementById('vaultConvertKanbanBtn').addEventListener('click', async
     const res = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`);
     content = await res.text();
   } catch (e) {
-    alert('Could not read file.');
+    showToast('Could not read file.', 'error');
     return;
   }
 
@@ -1952,7 +2179,7 @@ document.getElementById('vaultConvertKanbanBtn').addEventListener('click', async
       body: JSON.stringify({ kanban })
     });
   } catch (e) {
-    alert('Could not save kanban.');
+    showToast('Could not save kanban.', 'error');
     return;
   }
 
@@ -1987,7 +2214,7 @@ document.getElementById('vaultMoveBtn').addEventListener('click', async () => {
     });
     if (!res.ok) {
       const err = await res.json();
-      alert('Move failed: ' + (err.error || 'Unknown error'));
+      showToast('Move failed: ' + (err.error || 'Unknown error'), 'error');
       return;
     }
     currentFile = null;
@@ -1996,7 +2223,7 @@ document.getElementById('vaultMoveBtn').addEventListener('click', async () => {
     document.getElementById('vaultActions').style.display = 'none';
     loadVault();
   } catch (e) {
-    alert('Move failed.');
+    showToast('Move failed.', 'error');
   }
 });
 
@@ -2044,7 +2271,7 @@ function renderKanbanList() {
     });
     div.querySelector('.delete-kanban').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (kanbanBoards.length <= 1) { alert('Cannot delete the last board.'); return; }
+      if (kanbanBoards.length <= 1) { showToast('Cannot delete the last board.', 'warning'); return; }
       if (!confirm(`Delete "${board.title}"?`)) return;
       deleteKanbanBoard(board.file);
     });
@@ -2445,6 +2672,60 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Toast Notification System
+const toastIcons = {
+  success: 'fa-check-circle',
+  error: 'fa-exclamation-circle',
+  info: 'fa-info-circle',
+  warning: 'fa-exclamation-triangle'
+};
+
+function showToast(message, type = 'info', duration = 4000) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+
+  const icon = toastIcons[type] || toastIcons.info;
+
+  toast.innerHTML = `
+    <i class="fas ${icon} toast-icon"></i>
+    <span class="toast-message">${escapeHtml(message)}</span>
+    <button class="toast-close" title="Dismiss">
+      <i class="fas fa-times"></i>
+    </button>
+  `;
+
+  container.appendChild(toast);
+
+  // Close button handler
+  const closeBtn = toast.querySelector('.toast-close');
+  closeBtn.addEventListener('click', () => dismissToast(toast));
+
+  // Auto-dismiss
+  if (duration > 0) {
+    setTimeout(() => dismissToast(toast), duration);
+  }
+
+  return toast;
+}
+
+function dismissToast(toast) {
+  if (!toast || toast.classList.contains('hiding')) return;
+  toast.classList.add('hiding');
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 200);
+}
+
+function clearToasts() {
+  const container = document.getElementById('toastContainer');
+  if (container) {
+    container.innerHTML = '';
+  }
 }
 
 // Kanban Modal State
