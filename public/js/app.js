@@ -1063,7 +1063,11 @@ function renderSearchResults(results) {
       } else if (type === 'kanban') {
         const file = item.dataset.file;
         currentKanbanFile = file;
+        switchView('vault');
+        document.getElementById('sidebarVault')?.classList.remove('hidden');
+        document.getElementById('sidebarChat')?.classList.add('hidden');
         loadKanban();
+        loadKanbanList();
       }
       hideUnifiedSearch();
     });
@@ -1146,7 +1150,11 @@ async function loadDashboardTasks() {
           if (e.target.classList.contains('task-checkbox')) return;
           const file = item.dataset.file;
           currentKanbanFile = file;
-          switchView('kanban');
+          switchView('vault');
+          document.getElementById('sidebarVault')?.classList.remove('hidden');
+          document.getElementById('sidebarChat')?.classList.add('hidden');
+          loadKanban();
+          loadKanbanList();
         });
       });
 
@@ -1255,7 +1263,11 @@ loadFile = function(file) {
 
 // Wire up dashboard buttons
 document.getElementById('goToKanbanBtn')?.addEventListener('click', () => {
-  switchView('kanban');
+  switchView('vault');
+  document.getElementById('sidebarVault')?.classList.remove('hidden');
+  document.getElementById('sidebarChat')?.classList.add('hidden');
+  loadKanban();
+  loadKanbanList();
 });
 
 document.getElementById('goToVaultBtn')?.addEventListener('click', () => {
@@ -1285,7 +1297,9 @@ document.querySelectorAll('.quick-action-btn').forEach(btn => {
         socket.emit('sessions:new');
         break;
       case 'new-kanban':
-        switchView('kanban');
+        switchView('vault');
+        document.getElementById('sidebarVault')?.classList.remove('hidden');
+        document.getElementById('sidebarChat')?.classList.add('hidden');
         const name = prompt('Board name:');
         if (name) {
           createNewKanbanBoard(name);
