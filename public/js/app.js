@@ -159,87 +159,75 @@ function closeAllModals() {
   const autocomplete = document.getElementById('autocompleteDropdown');
   if (autocomplete) autocomplete.classList.add('hidden');
 
-  // Close FAB menu
-  hideFabMenu();
+  // Close chat plus menu
+  hideChatPlus();
 
   // Close any other overlays
   document.querySelectorAll('.vault-modal-overlay, .lightbox-overlay').forEach(el => el.remove());
 }
 
-// Quick Actions FAB
-let fabMenuOpen = false;
+// Chat Plus Menu (replaces FAB)
+let chatPlusOpen = false;
 
-function toggleFabMenu() {
-  const menu = document.getElementById('fabMenu');
-  const btn = document.getElementById('fabMainBtn');
+function toggleChatPlus() {
+  const menu = document.getElementById('chatPlusMenu');
+  if (!menu) return;
 
-  fabMenuOpen = !fabMenuOpen;
-
-  if (fabMenuOpen) {
+  chatPlusOpen = !chatPlusOpen;
+  if (chatPlusOpen) {
     menu.classList.remove('hidden');
-    btn.classList.add('active');
   } else {
-    hideFabMenu();
+    menu.classList.add('hidden');
   }
 }
 
-function hideFabMenu() {
-  const menu = document.getElementById('fabMenu');
-  const btn = document.getElementById('fabMainBtn');
-
-  if (menu && !menu.classList.contains('hidden')) {
-    menu.classList.add('hidden');
-    menu.style.animation = 'fab-out 0.2s ease-in forwards';
-  }
-
-  if (btn) btn.classList.remove('active');
-  fabMenuOpen = false;
+function hideChatPlus() {
+  const menu = document.getElementById('chatPlusMenu');
+  if (menu) menu.classList.add('hidden');
+  chatPlusOpen = false;
 }
 
 function executeQuickAction(action) {
-  hideFabMenu();
+  hideChatPlus();
 
   switch (action) {
+    case 'attach':
+      document.getElementById('chatUploadInput')?.click();
+      break;
     case 'summarize':
-      switchView('chat');
       messageInput.value = 'Summarize our conversation so far, highlighting the key points and action items.';
       messageInput.focus();
       break;
     case 'extract-tasks':
-      switchView('chat');
       messageInput.value = 'Extract all action items and tasks from our discussion and format them as a checklist.';
       messageInput.focus();
       break;
     case 'draft-email':
-      switchView('chat');
       messageInput.value = 'Draft a professional email based on the context of our conversation. Include a clear subject line and organized content.';
       messageInput.focus();
       break;
     case 'research':
-      switchView('chat');
       messageInput.value = 'Help me research this topic. Provide an overview, key concepts, and relevant resources.';
       messageInput.focus();
       break;
     case 'generate-diagram':
-      switchView('chat');
       messageInput.value = 'Generate a mermaid diagram that visualizes the concepts we\'ve been discussing. Use flowchart, sequence, or mindmap syntax as appropriate.';
       messageInput.focus();
       break;
   }
 }
 
-// Wire up FAB button
+// Wire up chat plus menu
 document.addEventListener('DOMContentLoaded', () => {
-  const fabMainBtn = document.getElementById('fabMainBtn');
-  if (fabMainBtn) {
-    fabMainBtn.addEventListener('click', (e) => {
+  const chatPlusBtn = document.getElementById('chatPlusBtn');
+  if (chatPlusBtn) {
+    chatPlusBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      toggleFabMenu();
+      toggleChatPlus();
     });
   }
 
-  // FAB menu items
-  document.querySelectorAll('.fab-menu-item').forEach(item => {
+  document.querySelectorAll('.chat-plus-item').forEach(item => {
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       const action = item.dataset.action;
@@ -247,11 +235,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Close FAB menu when clicking outside
   document.addEventListener('click', (e) => {
-    const fabContainer = document.getElementById('quickActionsFab');
-    if (fabContainer && !fabContainer.contains(e.target)) {
-      hideFabMenu();
+    const menu = document.getElementById('chatPlusMenu');
+    const btn = document.getElementById('chatPlusBtn');
+    if (menu && btn && !menu.contains(e.target) && e.target !== btn) {
+      hideChatPlus();
     }
   });
 });
@@ -715,7 +703,7 @@ const commands = [
     icon: 'fa-upload',
     shortcut: '',
     category: 'actions',
-    action: () => uploadBtn?.click()
+    action: () => document.getElementById('chatUploadInput')?.click()
   },
   {
     id: 'toggle-theme',
@@ -1306,7 +1294,7 @@ document.querySelectorAll('.quick-action-btn').forEach(btn => {
         }
         break;
       case 'upload':
-        uploadBtn?.click();
+        document.getElementById('chatUploadInput')?.click();
         break;
       case 'search':
         openUnifiedSearch();
@@ -2801,20 +2789,17 @@ autocompleteDropdown.addEventListener('mousedown', (e) => {
   }
 });
 
-// Chat file upload handler
-document.getElementById('chatUploadBtn').addEventListener('click', () => {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.multiple = true;
-
-  input.onchange = async (e) => {
+// Chat file upload handler (via chatPlusMenu "attach" or direct)
+const chatUploadInput = document.getElementById('chatUploadInput');
+if (chatUploadInput) {
+  chatUploadInput.addEventListener('change', async (e) => {
     const files = Array.from(e.target.files);
     for (const file of files) {
       await uploadTempFile(file);
     }
-  };
-  input.click();
-});
+    chatUploadInput.value = '';
+  });
+}
 
 // Split view chat elements
 const messageInputSplit = document.getElementById('messageInputSplit');

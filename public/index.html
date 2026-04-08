@@ -1948,105 +1948,18 @@
       50% { opacity: 0.5; }
     }
 
-    /* Quick Actions FAB */
-    .quick-actions-fab {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      z-index: 1500;
+    /* Chat Plus Menu */
+    #chatPlusMenu {
+      animation: chat-plus-in 0.15s ease-out;
     }
 
-    .fab-main-btn {
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
-      background: var(--accent-primary);
-      color: white;
-      border: none;
-      cursor: pointer;
-      box-shadow: 0 4px 20px rgba(139, 94, 60, 0.4);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 20px;
-      transition: all 0.3s ease;
+    .chat-plus-item:hover {
+      background: var(--bg-secondary);
     }
 
-    .fab-main-btn:hover {
-      transform: scale(1.1);
-      box-shadow: 0 6px 28px rgba(139, 94, 60, 0.5);
-    }
-
-    .fab-main-btn.active {
-      background: var(--accent-secondary);
-      transform: rotate(45deg);
-    }
-
-    .fab-menu {
-      position: absolute;
-      bottom: 70px;
-      right: 0;
-      display: flex;
-      flex-direction: column-reverse;
-      gap: 8px;
-      animation: fab-in 0.2s ease-out;
-    }
-
-    .fab-menu.hidden {
-      display: none;
-    }
-
-    .fab-menu-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 16px;
-      background: var(--bg-chat);
-      border: 1px solid var(--border-light);
-      border-radius: 12px;
-      cursor: pointer;
-      color: var(--text-primary);
-      font-size: 14px;
-      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-      white-space: nowrap;
-      transition: all 0.2s ease;
-      min-width: 160px;
-      justify-content: flex-end;
-    }
-
-    .fab-menu-item:hover {
-      background: var(--accent-primary);
-      color: white;
-      border-color: var(--accent-primary);
-      transform: translateX(-4px);
-    }
-
-    .fab-menu-item i {
-      font-size: 16px;
-      width: 20px;
-      text-align: center;
-    }
-
-    @keyframes fab-in {
-      from {
-        opacity: 0;
-        transform: translateY(10px) scale(0.9);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
-    }
-
-    @keyframes fab-out {
-      from {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
-      to {
-        opacity: 0;
-        transform: translateY(10px) scale(0.9);
-      }
+    @keyframes chat-plus-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     /* File Suggestions */
@@ -2526,10 +2439,39 @@
         <div class="p-4 border-t" style="border-color: var(--border-light);">
           <div id="chatFilePreview" class="hidden p-2 flex gap-2 overflow-x-auto"></div>
           <div class="flex gap-3">
-            <button id="chatUploadBtn" class="px-4 py-3 rounded-xl border-0 focus:outline-none focus:ring-2"
-                    style="background: var(--bg-secondary);">
-              <i class="fas fa-paperclip"></i>
-            </button>
+            <div class="relative">
+              <button id="chatPlusBtn" class="px-4 py-3 rounded-xl border-0 focus:outline-none focus:ring-2"
+                      style="background: var(--bg-secondary);">
+                <i class="fas fa-plus"></i>
+              </button>
+              <div id="chatPlusMenu" class="hidden absolute bottom-full left-0 mb-2 rounded-xl shadow-lg overflow-hidden z-50" style="background: var(--bg-chat); border: 1px solid var(--border-light); min-width: 200px;">
+                <div class="chat-plus-item flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors" data-action="attach" style="color: var(--text-primary);">
+                  <i class="fas fa-paperclip" style="width: 16px; text-align: center; color: var(--text-secondary);"></i>
+                  <span class="text-sm">Attach file</span>
+                </div>
+                <div class="chat-plus-item flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors" data-action="summarize" style="color: var(--text-primary);">
+                  <i class="fas fa-align-left" style="width: 16px; text-align: center; color: var(--text-secondary);"></i>
+                  <span class="text-sm">Summarize</span>
+                </div>
+                <div class="chat-plus-item flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors" data-action="extract-tasks" style="color: var(--text-primary);">
+                  <i class="fas fa-check-square" style="width: 16px; text-align: center; color: var(--text-secondary);"></i>
+                  <span class="text-sm">Extract tasks</span>
+                </div>
+                <div class="chat-plus-item flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors" data-action="draft-email" style="color: var(--text-primary);">
+                  <i class="fas fa-envelope" style="width: 16px; text-align: center; color: var(--text-secondary);"></i>
+                  <span class="text-sm">Draft email</span>
+                </div>
+                <div class="chat-plus-item flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors" data-action="research" style="color: var(--text-primary);">
+                  <i class="fas fa-search" style="width: 16px; text-align: center; color: var(--text-secondary);"></i>
+                  <span class="text-sm">Research</span>
+                </div>
+                <div class="chat-plus-item flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors" data-action="generate-diagram" style="color: var(--text-primary);">
+                  <i class="fas fa-project-diagram" style="width: 16px; text-align: center; color: var(--text-secondary);"></i>
+                  <span class="text-sm">Diagram</span>
+                </div>
+              </div>
+            </div>
+            <input type="file" id="chatUploadInput" class="hidden" multiple>
             <div class="flex-1 relative">
               <input type="text" id="messageInput"
                      class="w-full px-4 py-3 rounded-xl border-0 focus:outline-none focus:ring-2"
@@ -2811,35 +2753,6 @@
 
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
-
-  <!-- Quick Actions FAB -->
-  <div id="quickActionsFab" class="quick-actions-fab">
-    <button id="fabMainBtn" class="fab-main-btn" title="Quick Actions">
-      <i class="fas fa-plus"></i>
-    </button>
-    <div id="fabMenu" class="fab-menu hidden">
-      <div class="fab-menu-item" data-action="summarize" title="Summarize conversation">
-        <i class="fas fa-align-left"></i>
-        <span>Summarize</span>
-      </div>
-      <div class="fab-menu-item" data-action="extract-tasks" title="Extract action items">
-        <i class="fas fa-check-square"></i>
-        <span>Extract Tasks</span>
-      </div>
-      <div class="fab-menu-item" data-action="draft-email" title="Draft email from context">
-        <i class="fas fa-envelope"></i>
-        <span>Draft Email</span>
-      </div>
-      <div class="fab-menu-item" data-action="research" title="Research this topic">
-        <i class="fas fa-search"></i>
-        <span>Research</span>
-      </div>
-      <div class="fab-menu-item" data-action="generate-diagram" title="Generate diagram">
-        <i class="fas fa-project-diagram"></i>
-        <span>Diagram</span>
-      </div>
-    </div>
-  </div>
 
   <script src="/js/app.js"></script>
 </body>
