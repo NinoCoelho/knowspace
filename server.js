@@ -121,6 +121,11 @@ const upload = multer({
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
+
+// Legal pages
+app.get('/LICENSE', (_, res) => res.sendFile(path.join(__dirname, 'LICENSE')));
+app.get('/TERMS.md', (_, res) => res.sendFile(path.join(__dirname, 'TERMS.md')));
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Token authentication route - validates token in URL and sets cookie
