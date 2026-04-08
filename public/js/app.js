@@ -137,12 +137,269 @@ socket.on('client:switched', (data) => {
   if (currentView === 'vault') loadVault();
 });
 
-// Configure marked
+// Mermaid and library initialization
+window.addEventListener('DOMContentLoaded', () => {
+  if (window.mermaid) {
+    window.mermaid.init(window.mermaidConfig || { startOnLoad: false }, document.querySelectorAll('.prose .mermaid'));
+  }
+});
+
+// Configure marked with custom renderer for all enhancements
 if (typeof marked !== 'undefined') {
+  const renderer = new marked.Renderer();
+
+  // Headings with anchor links (marked v5+ passes object {text, depth, raw})
+  renderer.heading = function(data) {
+    const text = typeof data === 'object' ? data.text : data;
+    const level = typeof data === 'object' ? data.depth : arguments[1];
+    const escapedText = text.toLowerCase().replace(/[^\w]+/g, '-');
+    return `<h${level} id="${escapedText}">${text}<a class="heading-anchor" href="#${escapedText}" title="Link"><i class="fas fa-link"></i></a></h${level}>`;
+  };
+
+  // Code blocks with syntax highlighting via highlight.js
+  // marked v5+: code(code, lang, escaped) → code({ text, lang, escaped })
+  renderer.code = function(data) {
+    const code = typeof data === 'object' ? data.text : data;
+    const language = typeof data === 'object' ? data.lang : (arguments[1] || '');
+    const lang = language.split('{')[0].trim();
+    let highlighted;
+    try {
+      if (typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
+        highlighted = hljs.highlight(code, { language: lang }).value;
+      } else {
+        highlighted = escapeHtml(code);
+      }
+    } catch (e) {
+      highlighted = escapeHtml(code);
+    }
+    // Handle mermaid specially
+    if (lang === 'mermaid') {
+      return `<div class="mermaid">${code}</div>`;
+    }
+    return `<pre><code class="hljs language-${lang || 'plaintext'}">${highlighted}</code></pre>`;
+  };
+
+  // Inline code
+  renderer.codespan = function(data) {
+    const code = typeof data === 'object' ? data.text : data;
+    return `<code>${escapeHtml(code)}</code>`;
+  };
+
+  // Images with lightbox support
+  renderer.image = function(data) {
+    const href = typeof data === 'object' ? data.href : arguments[0];
+    const title = typeof data === 'object' ? data.title : arguments[1];
+    const text = typeof data === 'object' ? data.text : arguments[2];
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+    return `<img src="${href}" alt="${escapeHtml(text)}"${titleAttr} class="lightbox-img" data-src="${href}">`;
+  };
+
+  // Table of contents generation (post-render)
   marked.setOptions({
     breaks: true,
-    gfm: true
+    gfm: true,
+    renderer: renderer
   });
+}
+
+// Render markdown with all post-processing enhancements
+function renderMarkdown(content, container) {
+  if (typeof marked === 'undefined') return escapeHtml(content);
+  let html = marked.parse(content);
+
+  // Handle wiki-style [[Page Name]] links
+  html = html.replace(/\[\[([^\]]+)\]\]/g, (match, pageName) => {
+    const slug = pageName.trim().replace(/\s+/g, '-').toLowerCase();
+    return `<a class="vault-wiki-link" data-wiki-page="${escapeHtml(pageName.trim())}" href="javascript:void(0)">${escapeHtml(pageName)}</a>`;
+  });
+
+  // Handle callout blocks: > [!note], > [!tip], etc.
+  html = html.replace(/^&gt; \[!(note|tip|warning|danger|info)\]\s*\n((?:&gt;.*\n?)*)/gim, (match, type, body) => {
+    const icons = { note: 'fa-sticky-note', tip: 'fa-lightbulb', warning: 'fa-exclamation-triangle', danger: 'fa-skull', info: 'fa-info-circle' };
+    const icon = icons[type.toLowerCase()] || 'fa-info-circle';
+    const cleanBody = body.replace(/^&gt;\s?/gm, '').trim();
+    return `<div class="callout callout-${type.toLowerCase()}"><div class="callout-title"><i class="fas ${icon}"></i> ${type.charAt(0).toUpperCase() + type.slice(1)}</div><div class="callout-body">${cleanBody}</div></div>`;
+  });
+
+  // Handle GFM footnotes (convert to renderable format)
+  html = html.replace(/\[\^(\w+)\]/g, '<sup class="footnote-ref" id="fnref-$1"><a href="#fn-$1" class="footnote-back">[$1]</a></sup>');
+  html = html.replace(/^\[\^(\w+)\]:\s*(.*)$/gm, '<li id="fn-$1">$2 <a href="#fnref-$1">↩</a></li>');
+
+  if (container) {
+    container.innerHTML = html;
+
+    // Apply syntax highlighting to code blocks
+    container.querySelectorAll('pre code:not(.hljs)').forEach(block => {
+      const lang = block.className.replace('language-', '').trim();
+      if (hljs.getLanguage(lang)) {
+        try { block.innerHTML = hljs.highlight(block.textContent, { language: lang }).value; block.classList.add('hljs'); } catch (e) {}
+      }
+    });
+
+    // Initialize mermaid diagrams
+    if (window.mermaid) {
+      container.querySelectorAll('.mermaid').forEach(el => {
+        window.mermaid.init(window.mermaidConfig || { startOnLoad: false }, el);
+      });
+    }
+
+    // Render KaTeX math
+    if (typeof renderMathInElement !== 'undefined') {
+      try {
+        renderMathInElement(container, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '\\(', right: '\\)', display: false }
+          ],
+          throwOnError: false
+        });
+      } catch (e) { /* math render error */ }
+    }
+
+    // Image lightbox
+    container.querySelectorAll('img.lightbox-img').forEach(img => {
+      img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
+    });
+
+    // Wiki links
+    container.querySelectorAll('.vault-wiki-link').forEach(link => {
+      link.addEventListener('click', () => {
+        const pageName = link.dataset.wikiPage;
+        // Find matching vault file
+        const target = vaultFiles.find(f => {
+          const name = f.path.split('/').pop().replace(/\.md$/i, '');
+          return name.toLowerCase() === pageName.toLowerCase() ||
+                 name.toLowerCase().replace(/\s+/g, '-') === pageName.toLowerCase().replace(/\s+/g, '-');
+        });
+        if (target) loadFile(target);
+        else {
+          // Try searching
+          fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(pageName)}`).then(r => r.json()).then(data => {
+            if (data.results && data.results[0]) loadFile(data.results[0]);
+            else alert('Page not found: ' + pageName);
+          }).catch(() => alert('Page not found: ' + pageName));
+        }
+      });
+    });
+
+    // Wrap footnotes section if any footnotes exist
+    const footnotes = container.querySelector('li[id^="fn-"]');
+    if (footnotes) {
+      const footnotesSection = document.createElement('div');
+      footnotesSection.className = 'footnotes';
+      const ol = document.createElement('ol');
+      container.querySelectorAll('li[id^="fn-"]').forEach(fn => ol.appendChild(fn));
+      footnotesSection.appendChild(ol);
+      container.appendChild(footnotesSection);
+    }
+  }
+
+  return html;
+}
+
+// Post-render markdown enhancements (applies to container with innerHTML already set)
+function applyMarkdownEnhancements(container) {
+  if (!container) return;
+
+  // Syntax highlighting for code blocks
+  container.querySelectorAll('pre code:not(.hljs)').forEach(block => {
+    const lang = block.className.replace('language-', '').trim();
+    if (hljs.getLanguage(lang)) {
+      try { block.innerHTML = hljs.highlight(block.textContent, { language: lang }).value; block.classList.add('hljs'); } catch (e) {}
+    }
+  });
+
+  // Mermaid diagrams
+  if (window.mermaid) {
+    container.querySelectorAll('.mermaid').forEach(el => {
+      window.mermaid.init(window.mermaidConfig || { startOnLoad: false }, el);
+    });
+  }
+
+  // KaTeX math rendering
+  if (typeof renderMathInElement !== 'undefined') {
+    try {
+      renderMathInElement(container, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '$', right: '$', display: false },
+          { left: '\\[', right: '\\]', display: true },
+          { left: '\\(', right: '\\)', display: false }
+        ],
+        throwOnError: false
+      });
+    } catch (e) {}
+  }
+
+  // Image lightbox
+  container.querySelectorAll('img.lightbox-img').forEach(img => {
+    img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
+  });
+
+  // Wiki-style [[links]]
+  container.querySelectorAll('.vault-wiki-link').forEach(link => {
+    link.addEventListener('click', () => {
+      const pageName = link.dataset.wikiPage;
+      const target = vaultFiles.find(f => {
+        const name = f.path.split('/').pop().replace(/\.md$/i, '');
+        return name.toLowerCase() === pageName.toLowerCase() ||
+               name.toLowerCase().replace(/\s+/g, '-') === pageName.toLowerCase().replace(/\s+/g, '-');
+      });
+      if (target) loadFile(target);
+      else {
+        fetch(`/api/vault/search?token=${token}${asParam()}&q=${encodeURIComponent(pageName)}`).then(r => r.json()).then(data => {
+          if (data.results && data.results[0]) loadFile(data.results[0]);
+          else alert('Page not found: ' + pageName);
+        }).catch(() => alert('Page not found: ' + pageName));
+      }
+    });
+  });
+
+  // Footnotes wrapper
+  const fnItems = container.querySelectorAll('li[id^="fn-"]');
+  if (fnItems.length > 0) {
+    let footnotesSection = container.querySelector('.footnotes');
+    if (!footnotesSection) {
+      footnotesSection = document.createElement('div');
+      footnotesSection.className = 'footnotes';
+      const ol = document.createElement('ol');
+      footnotesSection.appendChild(ol);
+      container.appendChild(footnotesSection);
+    }
+    const ol = footnotesSection.querySelector('ol');
+    fnItems.forEach(fn => {
+      if (!ol.querySelector('#' + fn.id)) ol.appendChild(fn);
+    });
+  }
+}
+
+// Generate TOC from headings
+function generateTOC(container) {
+  const headings = container.querySelectorAll('h1, h2, h3');
+  if (headings.length < 2) return '';
+  let toc = '<div class="toc"><div class="toc-title">Contents</div><ul>';
+  headings.forEach(h => {
+    const level = parseInt(h.tagName[1]);
+    const id = h.id || h.textContent.toLowerCase().replace(/[^\w]+/g, '-');
+    h.id = id;
+    toc += `<li class="toc-h${level}"><a href="#${id}">${h.textContent.replace(/<[^>]+>/g, '')}</a></li>`;
+  });
+  toc += '</ul></div>';
+  return toc;
+}
+
+// Lightbox
+function openLightbox(src, alt) {
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = alt || '';
+  overlay.appendChild(img);
+  overlay.addEventListener('click', () => overlay.remove());
+  document.body.appendChild(overlay);
 }
 
 // Wire relative links inside a rendered vault markdown container to open files in the vault viewer
@@ -516,6 +773,11 @@ function addMessage(content, role, timestamp) {
   }
 
   msgDiv.innerHTML = html;
+
+  // Apply markdown enhancements to rendered content
+  if (role === 'assistant' && approvals.length === 0) {
+    applyMarkdownEnhancements(msgDiv);
+  }
 
 
   // Action buttons (copy + download) on all messages with text
@@ -1118,11 +1380,13 @@ async function openVaultPreview(filePath) {
 
     let bodyHtml = '';
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-      bodyHtml = `<img src="${fileUrl}" alt="${escapeHtml(cleanName)}" style="max-width:100%;border-radius:8px;">`;
+      bodyHtml = `<img src="${fileUrl}" alt="${escapeHtml(cleanName)}" style="max-width:100%;border-radius:8px;" class="lightbox-img" data-src="${fileUrl}">`;
     } else if (['mp4', 'webm', 'mov'].includes(ext)) {
       bodyHtml = `<video src="${fileUrl}" controls style="max-width:100%;border-radius:8px;"></video>`;
+    } else if (ext === 'pdf') {
+      bodyHtml = `<div class="pdf-viewer" id="pdfViewer"><div class="pdf-controls"><button id="pdfPrev"><i class="fas fa-chevron-left"></i></button><span id="pdfPageInfo">1 / 1</span><button id="pdfNext"><i class="fas fa-chevron-right"></i></button></div><canvas id="pdfCanvas"></canvas></div>`;
     } else if (typeof marked !== 'undefined') {
-      bodyHtml = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
+      bodyHtml = `<div class="prose max-w-none" id="modalProse">${marked.parse(content)}</div>`;
     } else {
       bodyHtml = `<pre style="white-space:pre-wrap;">${escapeHtml(content)}</pre>`;
     }
@@ -1169,6 +1433,51 @@ async function openVaultPreview(filePath) {
       overlay.remove();
       switchView('vault');
       loadVault(file.path);
+    });
+
+    // Post-render enhancements for modal prose content
+    const modalProse = overlay.querySelector('#modalProse');
+    if (modalProse) {
+      applyMarkdownEnhancements(modalProse);
+      // Add TOC if headings exist
+      const tocHtml = generateTOC(modalProse);
+      if (tocHtml) modalProse.insertAdjacentHTML('beforebegin', tocHtml);
+    }
+
+    // PDF viewer
+    const pdfViewer = overlay.querySelector('#pdfViewer');
+    if (pdfViewer && typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      let pdfDoc = null, currentPage = 1, totalPages = 1;
+      const canvas = pdfViewer.querySelector('#pdfCanvas');
+      const ctx = canvas.getContext('2d');
+      const pageInfo = pdfViewer.querySelector('#pdfPageInfo');
+      const prevBtn = pdfViewer.querySelector('#pdfPrev');
+      const nextBtn = pdfViewer.querySelector('#pdfNext');
+
+      pdfjsLib.getDocument(fileUrl).promise.then(doc => {
+        pdfDoc = doc;
+        totalPages = doc.numPages;
+        pageInfo.textContent = `${currentPage} / ${totalPages}`;
+        renderPdfPage(currentPage);
+      });
+
+      function renderPdfPage(num) {
+        pdfDoc.getPage(num).then(page => {
+          const viewport = page.getViewport({ scale: 1.5 });
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          page.render({ canvasContext: ctx, viewport }).promise;
+        });
+      }
+
+      prevBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; pageInfo.textContent = `${currentPage} / ${totalPages}`; renderPdfPage(currentPage); } });
+      nextBtn.addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; pageInfo.textContent = `${currentPage} / ${totalPages}`; renderPdfPage(currentPage); } });
+    }
+
+    // Lightbox for images in modal
+    overlay.querySelectorAll('img.lightbox-img').forEach(img => {
+      img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
     });
 
     // Close on Escape
@@ -1230,14 +1539,19 @@ async function loadFile(file) {
 
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
       const imagePath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
-      vaultContent.innerHTML = `<img src="${imagePath}" alt="${cleanName}" class="max-w-full rounded-lg">`;
+      vaultContent.innerHTML = `<img src="${imagePath}" alt="${cleanName}" class="max-w-full rounded-lg lightbox-img" data-src="${imagePath}">`;
     } else if (['mp4', 'webm', 'mov'].includes(ext)) {
       const videoPath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
       vaultContent.innerHTML = `<video src="${videoPath}" controls class="max-w-full rounded-lg"></video>`;
+    } else if (ext === 'pdf') {
+      const pdfPath = `/api/vault/file?token=${token}${asParam()}&path=${file.path}`;
+      vaultContent.innerHTML = `<div class="pdf-viewer" id="vaultPdfViewer" data-path="${encodeURIComponent(file.path)}"><div class="pdf-controls"><button id="vpdfPrev"><i class="fas fa-chevron-left"></i></button><span id="vpdfPageInfo">1 / 1</span><button id="vpdfNext"><i class="fas fa-chevron-right"></i></button></div><canvas id="vpdfCanvas"></canvas></div>`;
     } else {
       // Markdown
       if (typeof marked !== 'undefined') {
-        vaultContent.innerHTML = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
+        vaultContent.innerHTML = `<div class="prose max-w-none" id="vaultProse">${marked.parse(content)}</div>`;
+        const proseEl = vaultContent.querySelector('#vaultProse');
+        applyMarkdownEnhancements(proseEl);
         // Add copy buttons to content blocks inside a container
         function addCopyButtons(container) {
           container.querySelectorAll('.prose > p, .prose > pre, .prose > blockquote, .prose > ul, .prose > ol').forEach(block => {
@@ -1262,26 +1576,78 @@ async function loadFile(file) {
         function onVaultCheckboxToggle(idx) {
           vaultRawContent = toggleMarkdownCheckbox(vaultRawContent, idx);
           vaultContent.querySelector('.prose').innerHTML = marked.parse(vaultRawContent);
-          enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
-          addCopyButtons(vaultContent);
-          wireVaultInternalLinks(vaultContent, file.path);
+          const proseAfter = vaultContent.querySelector('.prose');
+          enableInteractiveCheckboxes(proseAfter, onVaultCheckboxToggle);
+          addCopyButtons(proseAfter);
+          wireVaultInternalLinks(proseAfter, file.path);
+          applyMarkdownEnhancements(proseAfter);
           fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(file.path)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: vaultRawContent })
           });
         }
-        enableInteractiveCheckboxes(vaultContent, onVaultCheckboxToggle);
-        addCopyButtons(vaultContent);
-        wireVaultInternalLinks(vaultContent, file.path);
+        enableInteractiveCheckboxes(proseEl, onVaultCheckboxToggle);
+        addCopyButtons(proseEl);
+        wireVaultInternalLinks(proseEl, file.path);
+
+        // Add TOC if there are 2+ headings
+        const tocHtml = generateTOC(proseEl);
+        if (tocHtml) proseEl.insertAdjacentHTML('beforebegin', tocHtml);
       } else {
         vaultContent.innerHTML = `<pre>${content}</pre>`;
       }
     }
+
+    // Initialize PDF viewer if present
+    const vaultPdfViewer = document.getElementById('vaultPdfViewer');
+    if (vaultPdfViewer && typeof pdfjsLib !== 'undefined') {
+      initPdfViewer(vaultPdfViewer);
+    }
+
+    // Image lightbox
+    vaultContent.querySelectorAll('img.lightbox-img').forEach(img => {
+      img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
+    });
   } catch (error) {
     console.error('Failed to load file:', error);
     vaultContent.innerHTML = '<p class="text-red-600">Failed to load file</p>';
   }
+}
+
+// PDF viewer init shared between modal and inline
+function initPdfViewer(container) {
+  const path = container.dataset.path;
+  if (!path) return;
+  const fileUrl = `/api/vault/file?token=${token}${asParam()}&path=${decodeURIComponent(path)}`;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  let pdfDoc = null, currentPage = 1, totalPages = 1;
+  const canvas = container.querySelector('canvas') || container.querySelector('#vpdfCanvas') || container.querySelector('#pdfCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const pageInfo = container.querySelector('span');
+  const prevBtn = container.querySelector('button[id$="Prev"]');
+  const nextBtn = container.querySelector('button[id$="Next"]');
+  if (!pageInfo || !prevBtn || !nextBtn) return;
+
+  pdfjsLib.getDocument(fileUrl).promise.then(doc => {
+    pdfDoc = doc;
+    totalPages = doc.numPages;
+    pageInfo.textContent = `${currentPage} / ${totalPages}`;
+    renderPdfPage(currentPage);
+  });
+
+  function renderPdfPage(num) {
+    pdfDoc.getPage(num).then(page => {
+      const viewport = page.getViewport({ scale: 1.5 });
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      page.render({ canvasContext: ctx, viewport }).promise;
+    });
+  }
+
+  prevBtn.onclick = () => { if (currentPage > 1) { currentPage--; pageInfo.textContent = `${currentPage} / ${totalPages}`; renderPdfPage(currentPage); } };
+  nextBtn.onclick = () => { if (currentPage < totalPages) { currentPage++; pageInfo.textContent = `${currentPage} / ${totalPages}`; renderPdfPage(currentPage); } };
 }
 
 // Search
@@ -1486,8 +1852,12 @@ function renderKanbanFileView() {
       .then(r => r.text())
       .then(content => {
         if (typeof marked !== 'undefined') {
-          vaultContent.innerHTML = `<div class="prose max-w-none">${marked.parse(content)}</div>`;
-          wireVaultInternalLinks(vaultContent, currentFile.path);
+          vaultContent.innerHTML = `<div class="prose max-w-none" id="vaultProse">${marked.parse(content)}</div>`;
+          const proseEl = vaultContent.querySelector('#vaultProse');
+          applyMarkdownEnhancements(proseEl);
+          wireVaultInternalLinks(proseEl, currentFile.path);
+          const tocHtml = generateTOC(proseEl);
+          if (tocHtml) proseEl.insertAdjacentHTML('beforebegin', tocHtml);
         } else {
           vaultContent.innerHTML = `<pre class="whitespace-pre-wrap text-sm">${escapeHtml(content)}</pre>`;
         }

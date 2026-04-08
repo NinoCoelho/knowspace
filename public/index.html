@@ -4,10 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Knowspace</title>
+  <script>
+    window.mermaidConfig = { startOnLoad: false, theme: 'base', themeVariables: { primaryColor: '#8B5E3C', primaryTextColor: '#1a1a1a', primaryBorderColor: '#8B5E3C', lineColor: '#6B6B6B', secondaryColor: '#F5F3EE', tertiaryColor: '#FAF9F6' } };
+  </script>
   <link rel="icon" type="image/png" href="/images/knowspace-logo.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/dist/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     :root {
@@ -1094,6 +1104,235 @@
       margin: 2px 0;
     }
     @keyframes pulse-badge { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+
+    /* Mermaid diagram styling */
+    .prose .mermaid {
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 1em 0;
+      text-align: center;
+    }
+    .prose .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* Code block syntax highlighting */
+    .prose pre {
+      position: relative;
+      background: #f6f8fa;
+      border: 1px solid var(--border-light);
+    }
+    .prose pre code.hljs {
+      background: transparent;
+      padding: 0;
+      font-size: 0.875em;
+    }
+    .prose pre code {
+      background: transparent;
+      padding: 0;
+    }
+
+    /* Callout/admonition blocks */
+    .prose .callout {
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 1em 0;
+      border-left: 4px solid;
+    }
+    .prose .callout-note { background: rgba(59,130,246,0.1); border-color: #3b82f6; }
+    .prose .callout-tip { background: rgba(16,185,64,0.1); border-color: #10b981; }
+    .prose .callout-warning { background: rgba(245,158,11,0.1); border-color: #f59e0b; }
+    .prose .callout-danger { background: rgba(239,68,68,0.1); border-color: #ef4444; }
+    .prose .callout-info { background: rgba(139,92,246,0.1); border-color: #8b5cf6; }
+    .prose .callout-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .prose .callout-note .callout-title { color: #2563eb; }
+    .prose .callout-tip .callout-title { color: #059669; }
+    .prose .callout-warning .callout-title { color: #d97706; }
+    .prose .callout-danger .callout-title { color: #dc2626; }
+    .prose .callout-info .callout-title { color: #7c3aed; }
+    .prose .callout-body { font-size: 0.95em; }
+    .prose .callout-body p { margin: 0; }
+
+    /* Image lightbox */
+    .prose img, .vault-modal-body img {
+      cursor: zoom-in;
+      transition: opacity 0.15s ease;
+    }
+    .prose img:hover, .vault-modal-body img:hover {
+      opacity: 0.85;
+    }
+    .lightbox-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.9);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: zoom-out;
+      backdrop-filter: blur(4px);
+    }
+    .lightbox-overlay img {
+      max-width: 95vw;
+      max-height: 95vh;
+      object-fit: contain;
+      border-radius: 8px;
+      cursor: default;
+      opacity: 1;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+
+    /* Heading anchors */
+    .prose h1, .prose h2, .prose h3, .prose h4 {
+      scroll-margin-top: 80px;
+    }
+    .prose .heading-anchor {
+      opacity: 0;
+      margin-left: 8px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.8em;
+      transition: opacity 0.15s;
+    }
+    .prose h1:hover .heading-anchor,
+    .prose h2:hover .heading-anchor,
+    .prose h3:hover .heading-anchor,
+    .prose h4:hover .heading-anchor {
+      opacity: 1;
+    }
+    .prose .heading-anchor:hover {
+      color: var(--accent-primary);
+    }
+
+    /* Table of Contents */
+    .toc {
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 1.5em;
+      border: 1px solid var(--border-light);
+    }
+    .toc-title {
+      font-weight: 600;
+      font-size: 0.85em;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .toc ul {
+      padding-left: 0;
+      margin: 0;
+      list-style: none;
+    }
+    .toc li {
+      margin: 4px 0;
+    }
+    .toc li a {
+      color: var(--accent-primary);
+      text-decoration: none;
+      font-size: 0.9em;
+    }
+    .toc li a:hover {
+      text-decoration: underline;
+    }
+    .toc .toc-h2 { padding-left: 1em; }
+    .toc .toc-h3 { padding-left: 2em; font-size: 0.85em; }
+
+    /* KaTeX math display blocks */
+    .prose .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 8px 0;
+    }
+
+    /* Footnotes */
+    .prose .footnotes {
+      font-size: 0.85em;
+      border-top: 1px solid var(--border-light);
+      padding-top: 1em;
+      margin-top: 2em;
+      color: var(--text-secondary);
+    }
+    .prose sup.footnote-ref {
+      font-size: 0.75em;
+      vertical-align: super;
+    }
+    .prose .footnotes ol {
+      padding-left: 1.5em;
+    }
+    .prose .footnotes li {
+      margin: 6px 0;
+    }
+
+    /* Vault wiki-style links */
+    .vault-wiki-link {
+      color: var(--accent-primary);
+      background: rgba(139,94,60,0.1);
+      padding: 1px 6px;
+      border-radius: 4px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .vault-wiki-link:hover {
+      background: rgba(139,94,60,0.2);
+      text-decoration: underline;
+    }
+
+    /* PDF viewer */
+    .pdf-viewer {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .pdf-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 8px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-light);
+      font-size: 14px;
+    }
+    .pdf-controls button {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+      color: var(--text-primary);
+    }
+    .pdf-controls button:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+    .pdf-controls span {
+      color: var(--text-secondary);
+      min-width: 60px;
+      text-align: center;
+    }
+    #pdfCanvas {
+      flex: 1;
+      background: #525659;
+    }
+
+    /* Video embedding inline */
+    .prose video {
+      max-width: 100%;
+      border-radius: 8px;
+      margin: 1em 0;
+    }
   </style>
 </head>
 <body class="h-screen flex">
