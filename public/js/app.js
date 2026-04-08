@@ -578,6 +578,254 @@ document.getElementById('unifiedSearchModal')?.addEventListener('click', (e) => 
   if (e.target.id === 'unifiedSearchModal') hideUnifiedSearch();
 });
 
+// Dashboard functionality
+function loadDashboard() {
+  loadDashboardTasks();
+  loadDashboardRecentFiles();
+  updateAgentStatus();
+}
+
+async function loadDashboardTasks() {
+  const tasksContainer = document.getElementById('dashboardTasks');
+  if (!tasksContainer) return;
+
+  try {
+    const res = await fetch(`/api/kanban/list?token=${token}${asParam()}`);
+    const data = await res.json();
+    const boards = data.boards || [];
+
+    const todayTasks = [];
+
+    for (const board of boards) {
+      const boardRes = await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(board.file)}`);
+      const boardData = await boardRes.json();
+      const kanban = boardData.kanban;
+
+      if (kanban && kanban.lanes) {
+        for (const lane of kanban.lanes) {
+          for (const card of lane.cards) {
+            const hasUnchecked = card.body && /- \[ \]/.test(card.body);
+            if (hasUnchecked || !card.body) {
+              todayTasks.push({
+                title: card.title,
+                board: board.title,
+                lane: lane.title,
+                file: board.file,
+                cardId: card.id
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (todayTasks.length > 0) {
+      tasksContainer.innerHTML = todayTasks.slice(0, 5).map(task => `
+        <div class="task-item" data-file="${escapeHtml(task.file)}" data-card-id="${escapeHtml(task.cardId)}">
+          <input type="checkbox" class="task-checkbox">
+          <span class="task-title">${escapeHtml(task.title)}</span>
+        </div>
+      `).join('');
+
+      tasksContainer.querySelectorAll('.task-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.classList.contains('task-checkbox')) return;
+          const file = item.dataset.file;
+          currentKanbanFile = file;
+          switchView('kanban');
+        });
+      });
+
+      tasksContainer.querySelectorAll('.task-checkbox').forEach((checkbox, i) => {
+        checkbox.addEventListener('change', (e) => {
+          const item = e.target.closest('.task-item');
+          item.classList.toggle('checked', checkbox.checked);
+        });
+      });
+    } else {
+      tasksContainer.innerHTML = `
+        <div class="text-center py-8" style="color: var(--text-secondary);">
+          <i class="fas fa-clipboard-list" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
+          <p class="text-sm">No tasks for today</p>
+        </div>
+      `;
+    }
+  } catch (e) {
+    console.error('Failed to load tasks:', e);
+  }
+}
+
+async function loadDashboardRecentFiles() {
+  const recentContainer = document.getElementById('dashboardRecentFiles');
+  if (!recentContainer) return;
+
+  const recentFiles = JSON.parse(localStorage.getItem('ks_recentFiles') || '[]');
+  const uniqueRecent = [...new Set(recentFiles)].slice(0, 5);
+
+  if (uniqueRecent.length > 0) {
+    const files = await fetch(`/api/vault?token=${token}${asParam()}`)
+      .then(r => r.json())
+      .then(data => (data.files || []))
+      .catch(() => []);
+
+    recentContainer.innerHTML = uniqueRecent.map(path => {
+      const file = files.find(f => f.path === path);
+      const ext = path.split('.').pop().toLowerCase();
+      const icon = getFileIcon(ext);
+      const name = path.split('/').pop().replace(/\.(md|markdown)$/, '');
+
+      return `
+        <div class="recent-file-item" data-path="${escapeHtml(path)}">
+          <div class="recent-file-icon">
+            <i class="fas ${icon}"></i>
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 13px; color: var(--text-primary);">${escapeHtml(name)}</div>
+            <div style="font-size: 11px; color: var(--text-secondary);">${escapeHtml(path)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    recentContainer.querySelectorAll('.recent-file-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const path = item.dataset.path;
+        const file = vaultFiles.find(f => f.path === path);
+        if (file) {
+          switchView('vault');
+          loadFile(file);
+        }
+      });
+    });
+  } else {
+    recentContainer.innerHTML = `
+      <div class="text-center py-8" style="color: var(--text-secondary);">
+        <i class="fas fa-file-alt" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
+        <p class="text-sm">No recent files</p>
+      </div>
+    `;
+  }
+}
+
+function updateAgentStatus() {
+  const statusDiv = document.getElementById('dashboardAgentStatus');
+  if (!statusDiv) return;
+
+  const isProcessing = processingSessions.size > 0;
+
+  statusDiv.innerHTML = `
+    <div class="flex items-center gap-2 py-2">
+      <div class="status-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: ${isProcessing ? '#f59e0b' : '#10b981'};"></div>
+      <span style="color: var(--text-primary); font-size: 14px;">${isProcessing ? 'Processing...' : 'Ready'}</span>
+    </div>
+    <p class="text-xs mt-2" style="color: var(--text-secondary);">${isProcessing ? 'Your AI assistant is working on a task.' : 'Your AI assistant is ready to help.'}</p>
+  `;
+}
+
+// Track recently accessed files
+const originalLoadFile = loadFile;
+loadFile = function(file) {
+  const result = originalLoadFile.call(this, file);
+  if (file && file.path) {
+    const recent = JSON.parse(localStorage.getItem('ks_recentFiles') || '[]');
+    recent.unshift(file.path);
+    const uniqueRecent = [...new Set(recent)].slice(0, 10);
+    localStorage.setItem('ks_recentFiles', JSON.stringify(uniqueRecent));
+
+    if (currentView === 'home') {
+      loadDashboardRecentFiles();
+    }
+  }
+  return result;
+};
+
+// Wire up dashboard buttons
+document.getElementById('goToKanbanBtn')?.addEventListener('click', () => {
+  switchView('kanban');
+});
+
+document.getElementById('goToVaultBtn')?.addEventListener('click', () => {
+  switchView('vault');
+});
+
+document.getElementById('managePromptsBtn')?.addEventListener('click', () => {
+  showToast('Prompt library coming soon!', 'info', 3000);
+});
+
+// Quick prompts
+document.querySelectorAll('.quick-prompt-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const prompt = btn.dataset.prompt;
+    if (prompt) {
+      switchView('chat');
+      messageInput.value = prompt;
+      messageInput.focus();
+    }
+  });
+});
+
+// Quick actions
+document.querySelectorAll('.quick-action-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.action;
+
+    switch (action) {
+      case 'new-chat':
+        switchView('chat');
+        socket.emit('sessions:new');
+        break;
+      case 'new-kanban':
+        switchView('kanban');
+        const name = prompt('Board name:');
+        if (name) {
+          createNewKanbanBoard(name);
+        }
+        break;
+      case 'upload':
+        uploadBtn?.click();
+        break;
+      case 'search':
+        openUnifiedSearch();
+        break;
+    }
+  });
+});
+
+// Create new kanban board (simplified)
+async function createNewKanbanBoard(name) {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  let file = slug + '.md';
+
+  try {
+    const listRes = await fetch(`/api/kanban/list?token=${token}${asParam()}`);
+    const listData = await listRes.json();
+    if (listData.boards?.some(b => b.file === file)) {
+      file = slug + '-' + Date.now().toString(36) + '.md';
+    }
+  } catch (e) {}
+
+  const newKanban = {
+    title: name.trim(),
+    lanes: [
+      { id: 'todo', title: 'To Do', cards: [] },
+      { id: 'in-progress', title: 'In Progress', cards: [] },
+      { id: 'done', title: 'Done', cards: [] }
+    ]
+  };
+
+  await fetch(`/api/kanban?token=${token}${asParam()}&file=${encodeURIComponent(file)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kanban: newKanban })
+  });
+
+  currentKanbanFile = file;
+  currentKanban = newKanban;
+  renderKanban();
+  loadKanbanList();
+  showToast(`Created board: ${name}`, 'success', 2000);
+}
+
 // Wire up shortcuts modal close buttons
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('closeShortcutsModal')?.addEventListener('click', hideShortcutsModal);
@@ -1242,56 +1490,64 @@ function switchView(view) {
     item.classList.toggle('active', item.dataset.view === view);
   });
 
-  // Handle split view
-  if (splitViewEnabled) {
-    // Split view is active, keep it and sync content
-    document.getElementById('splitViewContainer').classList.remove('hidden');
-    document.getElementById('chatView').classList.add('hidden');
-    document.getElementById('vaultView').classList.add('hidden');
+  // Hide all views first
+  document.getElementById('splitViewContainer')?.classList.add('hidden');
+  document.getElementById('chatView')?.classList.add('hidden');
+  document.getElementById('vaultView')?.classList.add('hidden');
+  document.getElementById('homeView')?.classList.add('hidden');
 
-    // Sync messages to split view if in chat view
-    if (view === 'chat') {
+  // Show selected view
+  if (view === 'home') {
+    document.getElementById('homeView')?.classList.remove('hidden');
+    loadDashboard();
+    // Hide sidebar panels in home view
+    document.getElementById('sidebarChat')?.classList.add('hidden');
+    document.getElementById('sidebarVault')?.classList.add('hidden');
+  } else if (view === 'chat') {
+    document.getElementById('chatView')?.classList.remove('hidden');
+
+    // Handle split view
+    if (splitViewEnabled) {
+      document.getElementById('splitViewContainer')?.classList.remove('hidden');
+      document.getElementById('chatView')?.classList.add('hidden');
+
+      // Sync messages to split view
       const messagesSplit = document.getElementById('messagesSplit');
       if (messagesSplit && messagesDiv) {
         messagesSplit.innerHTML = messagesDiv.innerHTML;
       }
-      // Update sidebar
-      document.getElementById('sidebarChat').classList.remove('hidden');
-      document.getElementById('sidebarVault').classList.add('hidden');
-    } else if (view === 'vault') {
-      // Update sidebar
-      document.getElementById('sidebarChat').classList.add('hidden');
-      document.getElementById('sidebarVault').classList.remove('hidden');
-      loadVaultSplit();
     }
-  } else {
-    // Normal view mode
-    document.getElementById('splitViewContainer').classList.add('hidden');
-    document.getElementById('chatView').classList.toggle('hidden', view !== 'chat');
-    document.getElementById('vaultView').classList.toggle('hidden', view !== 'vault');
 
-    // Show/hide sidebar panels
-    document.getElementById('sidebarChat').classList.toggle('hidden', view !== 'chat');
-    document.getElementById('sidebarVault').classList.toggle('hidden', view !== 'vault');
-  }
+    // Update sidebar
+    document.getElementById('sidebarChat')?.classList.remove('hidden');
+    document.getElementById('sidebarVault')?.classList.add('hidden');
 
-  // Update session list active highlight
-  if (view === 'chat') {
+    // Update session list active highlight
     renderSessionList();
-    // If no session is active yet but sessions are loaded, select the first one
     const portalSessions = sessions.filter(s => !s.isSubagent);
     if (!activeSessionKey && portalSessions.length > 0) {
       socket.emit('sessions:switch', { sessionKey: portalSessions[0].key });
     } else {
-      // Re-check agent status and scroll to bottom
       socket.emit('agent:status');
       const targetMessagesDiv = splitViewEnabled ? document.getElementById('messagesSplit') : messagesDiv;
       if (targetMessagesDiv) targetMessagesDiv.scrollTop = targetMessagesDiv.scrollHeight;
     }
-  }
+  } else if (view === 'vault') {
+    document.getElementById('vaultView')?.classList.remove('hidden');
 
-  // Load data for view
-  if (view === 'vault') loadVault();
+    // Handle split view
+    if (splitViewEnabled) {
+      document.getElementById('splitViewContainer')?.classList.remove('hidden');
+      document.getElementById('vaultView')?.classList.add('hidden');
+      loadVaultSplit();
+    }
+
+    // Update sidebar
+    document.getElementById('sidebarChat')?.classList.add('hidden');
+    document.getElementById('sidebarVault')?.classList.remove('hidden');
+
+    loadVault();
+  }
 }
 
 // Connection status monitoring

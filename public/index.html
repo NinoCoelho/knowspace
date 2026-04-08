@@ -1835,6 +1835,118 @@
       padding: 40px 20px;
       color: var(--text-secondary);
     }
+
+    /* Dashboard Styles */
+    .dashboard-card {
+      transition: all 0.2s ease;
+    }
+
+    .dashboard-card:hover {
+      box-shadow: var(--shadow-subtle);
+    }
+
+    .grid {
+      display: grid;
+      gap: 24px;
+    }
+
+    .grid-cols-1 {
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+
+    @media (min-width: 768px) {
+      .md\:grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .lg\:grid-cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .md\:col-span-2 {
+        grid-column: span 2;
+      }
+    }
+
+    .quick-prompt-btn:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .quick-action-btn:hover {
+      background: var(--accent-primary);
+      color: white;
+      border-color: var(--accent-primary);
+    }
+
+    .quick-prompt-btn:hover i,
+    .quick-action-btn:hover i {
+      color: white;
+    }
+
+    .task-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .task-item:hover {
+      background: var(--bg-primary);
+    }
+
+    .task-checkbox {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      flex-shrink: 0;
+      accent-color: var(--accent-primary);
+    }
+
+    .task-item.checked .task-title {
+      text-decoration: line-through;
+      opacity: 0.6;
+    }
+
+    .recent-file-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .recent-file-item:hover {
+      background: var(--bg-primary);
+    }
+
+    .recent-file-icon {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      background: var(--bg-primary);
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .status-indicator {
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
   </style>
 </head>
 <body class="h-screen flex">
@@ -1863,7 +1975,10 @@
 
       <!-- Nav tabs -->
       <nav class="px-3 flex-shrink-0 flex gap-1">
-      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium active" data-view="chat">
+      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="home">
+        <i class="fas fa-home mr-1.5"></i>Home
+      </a>
+      <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="chat">
         <i class="fas fa-comment mr-1.5"></i>Chat
       </a>
       <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="vault">
@@ -1989,6 +2104,116 @@
 
       <!-- Resize Handle -->
       <div id="splitResizeHandle" class="w-1 cursor-col-resize hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"></div>
+    </div>
+
+    <!-- Home View (Daily Dashboard) -->
+    <div id="homeView" class="flex-1 hidden m-6 min-h-0">
+      <div class="h-full rounded-2xl overflow-hidden flex flex-col" style="background: var(--bg-chat);">
+        <div class="p-6 border-b" style="border-color: var(--border-light);">
+          <h1 class="text-2xl font-bold" style="color: var(--text-primary);">Welcome back!</h1>
+          <p class="text-sm mt-1" style="color: var(--text-secondary);">Here's what's happening today</p>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Today's Tasks -->
+            <div class="dashboard-card rounded-xl p-5" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+              <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                  <i class="fas fa-tasks" style="color: var(--accent-light); font-size: 18px;"></i>
+                  <h3 class="font-semibold" style="color: var(--text-primary);">Today's Tasks</h3>
+                </div>
+                <button id="goToKanbanBtn" class="text-xs" style="color: var(--accent-primary); background: none; border: none; cursor: pointer;">View all →</button>
+              </div>
+              <div id="dashboardTasks" class="space-y-2">
+                <div class="text-center py-8" style="color: var(--text-secondary);">
+                  <i class="fas fa-clipboard-list" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
+                  <p class="text-sm">No tasks due today</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recent Files -->
+            <div class="dashboard-card rounded-xl p-5" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+              <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                  <i class="fas fa-clock" style="color: var(--accent-light); font-size: 18px;"></i>
+                  <h3 class="font-semibold" style="color: var(--text-primary);">Recent Files</h3>
+                </div>
+                <button id="goToVaultBtn" class="text-xs" style="color: var(--accent-primary); background: none; border: none; cursor: pointer;">View all →</button>
+              </div>
+              <div id="dashboardRecentFiles" class="space-y-2">
+                <div class="text-center py-8" style="color: var(--text-secondary);">
+                  <i class="fas fa-file-alt" style="font-size: 24px; opacity: 0.3; margin-bottom: 8px;"></i>
+                  <p class="text-sm">No recent files</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Prompts -->
+            <div class="dashboard-card rounded-xl p-5" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+              <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                  <i class="fas fa-bolt" style="color: var(--accent-light); font-size: 18px;"></i>
+                  <h3 class="font-semibold" style="color: var(--text-primary);">Quick Prompts</h3>
+                </div>
+                <button id="managePromptsBtn" class="text-xs" style="color: var(--accent-primary); background: none; border: none; cursor: pointer;">Manage →</button>
+              </div>
+              <div id="dashboardQuickPrompts" class="space-y-2">
+                <button class="quick-prompt-btn w-full text-left px-3 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-prompt="Summarize the conversation so far">
+                  <i class="fas fa-align-left mr-2" style="color: var(--text-secondary);"></i>Summarize conversation
+                </button>
+                <button class="quick-prompt-btn w-full text-left px-3 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-prompt="Extract action items from our discussion">
+                  <i class="fas fa-check-square mr-2" style="color: var(--text-secondary);"></i>Extract action items
+                </button>
+                <button class="quick-prompt-btn w-full text-left px-3 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-prompt="Help me brainstorm ideas for">
+                  <i class="fas fa-lightbulb mr-2" style="color: var(--text-secondary);"></i>Brainstorm ideas
+                </button>
+              </div>
+            </div>
+
+            <!-- Agent Status -->
+            <div class="dashboard-card rounded-xl p-5" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+              <div class="flex items-center gap-2 mb-4">
+                <i class="fas fa-robot" style="color: var(--accent-light); font-size: 18px;"></i>
+                <h3 class="font-semibold" style="color: var(--text-primary);">Agent Status</h3>
+              </div>
+              <div id="dashboardAgentStatus">
+                <div class="flex items-center gap-2 py-2">
+                  <div class="status-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: #10b981;"></div>
+                  <span style="color: var(--text-primary); font-size: 14px;">Ready</span>
+                </div>
+                <p class="text-xs mt-2" style="color: var(--text-secondary);">Your AI assistant is ready to help.</p>
+              </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="dashboard-card rounded-xl p-5" style="background: var(--bg-secondary); border: 1px solid var(--border-light); md:col-span-2">
+              <div class="flex items-center gap-2 mb-4">
+                <i class="fas fa-rocket" style="color: var(--accent-light); font-size: 18px;"></i>
+                <h3 class="font-semibold" style="color: var(--text-primary);">Quick Actions</h3>
+              </div>
+              <div class="flex flex-wrap gap-3">
+                <button class="quick-action-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-action="new-chat">
+                  <i class="fas fa-plus"></i>
+                  <span>New Chat</span>
+                </button>
+                <button class="quick-action-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-action="new-kanban">
+                  <i class="fas fa-columns"></i>
+                  <span>New Kanban</span>
+                </button>
+                <button class="quick-action-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-action="upload">
+                  <i class="fas fa-upload"></i>
+                  <span>Upload File</span>
+                </button>
+                <button class="quick-action-btn flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" style="background: var(--bg-primary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" data-action="search">
+                  <i class="fas fa-search"></i>
+                  <span>Search</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Chat View (Full) -->
