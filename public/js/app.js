@@ -1051,11 +1051,10 @@ function renderSearchResults(results) {
       } else if (type === 'kanban') {
         const file = item.dataset.file;
         currentKanbanFile = file;
+        const vaultPath = 'kanban/' + file;
+        const fileObj = vaultFiles.find(f => f.path === vaultPath) || { path: vaultPath, name: file };
         switchView('vault');
-        document.getElementById('sidebarVault')?.classList.remove('hidden');
-        document.getElementById('sidebarChat')?.classList.add('hidden');
-        loadKanban();
-        loadKanbanList();
+        loadFile(fileObj);
       }
       hideUnifiedSearch();
     });
@@ -1138,11 +1137,12 @@ async function loadDashboardTasks() {
           if (e.target.classList.contains('task-checkbox')) return;
           const file = item.dataset.file;
           currentKanbanFile = file;
+
+          // Build a file object so loadFile can open it in the vault
+          const vaultPath = 'kanban/' + file;
+          const fileObj = vaultFiles.find(f => f.path === vaultPath) || { path: vaultPath, name: file };
           switchView('vault');
-          document.getElementById('sidebarVault')?.classList.remove('hidden');
-          document.getElementById('sidebarChat')?.classList.add('hidden');
-          loadKanban();
-          loadKanbanList();
+          loadFile(fileObj);
         });
       });
 
@@ -1252,10 +1252,11 @@ loadFile = function(file) {
 // Wire up dashboard buttons
 document.getElementById('goToKanbanBtn')?.addEventListener('click', () => {
   switchView('vault');
-  document.getElementById('sidebarVault')?.classList.remove('hidden');
-  document.getElementById('sidebarChat')?.classList.add('hidden');
-  loadKanban();
-  loadKanbanList();
+  // Open the first kanban board in the vault view
+  const kanbanFile = vaultFiles.find(f => f.path.startsWith('kanban/') && f.path.endsWith('.md'));
+  if (kanbanFile) {
+    loadFile(kanbanFile);
+  }
 });
 
 document.getElementById('goToVaultBtn')?.addEventListener('click', () => {
