@@ -256,61 +256,45 @@ Set in shell or `~/.knowspace/.env`:
 
 ---
 
+## Roadmap
+
+What's next for Knowspace:
+
+**Soon**
+- Mobile-responsive layout
+- PDF and CSV renderers in the vault
+- Notification system (agent finished a task, new file created)
+- Multi-language support (i18n)
+
+**Later**
+- Plugin system for custom vault renderers and integrations
+- Collaborative editing (real-time multi-user vault)
+- Windows daemon support (Windows Service)
+- Admin dashboard (usage stats, client management)
+- API for third-party integrations
+
+Have an idea? Open an issue with the `enhancement` label.
+
+---
+
 ## Contributing
 
-Knowspace is open source and we welcome contributions from the OpenClaw community.
+Knowspace is open source and we welcome contributions from the OpenClaw community. See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
 
-**We're actively looking for:**
+**Good areas for first contributions:**
 
-- Frontend improvements (accessibility, responsive design, i18n)
+- Frontend improvements (accessibility, responsive design)
 - New vault renderers (PDF, CSV/TSV tables, code notebooks)
 - Integrations (calendar, email, project management tools)
 - Testing and CI/CD
 - Documentation and examples
 
-**How to contribute:**
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes — keep the adapter boundary clean (`server.js` never imports `lib/gateway.js`)
-4. Run `npm test` to verify the adapter contract tests pass
-5. Open a pull request
-
-If you're building something with OpenClaw and want a web interface, this is the project for you. Open an issue to discuss ideas, or jump straight in with a PR.
+Quick start: fork, branch, `npm test`, PR. We respond quickly.
 
 ---
 
 ## License
 
-MIT License
+[MIT](LICENSE) &middot; Copyright &copy; 2026 Idemir Dias Coelho
 
-Copyright (c) 2026 Idemir Dias Coelho
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-## Terms of Use
-
-Knowspace is provided as-is for use with [OpenClaw](https://github.com/openclaw/openclaw). By using this software, you agree that:
-
-- The software is provided under the MIT License with no warranty of any kind
-- You are responsible for securing your installation (tokens, network exposure, file access)
-- Client data is stored on your filesystem — you are responsible for backups and data protection compliance
-- The authors are not liable for any data loss, security incidents, or damages arising from use of the software
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md) code of conduct.
