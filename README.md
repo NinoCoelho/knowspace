@@ -1,51 +1,155 @@
-# Knowspace
+<p align="center">
+  <img src="public/images/knowspace-logo.png" alt="Knowspace" width="120" />
+</p>
 
-A web portal sidecar for [OpenClaw](https://github.com/openclaw/openclaw) that gives clients a simple browser interface for AI agent interactions. Adds chat history, a file vault, and a kanban board on top of an existing OpenClaw installation — no Docker, no database, no separate infrastructure.
+<h1 align="center">Knowspace</h1>
 
-```
-Browser → Knowspace Portal → Adapter Layer → OpenClaw Gateway
-```
+<p align="center">
+  <strong>The web portal for your AI agents.</strong>
+</p>
+
+<p align="center">
+  Chat, files, and tasks — all in one browser tab. Built as a sidecar for
+  <a href="https://github.com/openclaw/openclaw">OpenClaw</a>.
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> &middot;
+  <a href="#screenshots">Screenshots</a> &middot;
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#contributing">Contributing</a> &middot;
+  <a href="#license">License</a>
+</p>
+
+---
+
+## Why Knowspace?
+
+You already talk to your AI agent in a terminal. Your clients shouldn't have to.
+
+Knowspace gives every OpenClaw agent a clean, professional web interface — no Docker, no database, no infrastructure to manage. Spin it up next to your existing OpenClaw installation and your clients get:
+
+- **Real-time chat** with the agent, with full history and file attachments
+- **A file vault** to browse, read, and search agent workspace files
+- **A Kanban board** to track tasks — stored as plain markdown, compatible with Obsidian
+- **A knowledge graph** that visualizes how vault files connect
+- **Multi-client support** — onboard new clients with a single command, each with their own workspace and access token
+
+One process. One port. Zero dependencies beyond Node.js and OpenClaw.
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Chat</b></td>
+    <td align="center"><b>Home</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/chat.png" alt="Chat view" width="480" /></td>
+    <td><img src="docs/home.png" alt="Home view" width="480" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Vault</b></td>
+    <td align="center"><b>Kanban Board</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/vault.png" alt="Vault view" width="480" /></td>
+    <td><img src="docs/vault-kanban.png" alt="Kanban board" width="480" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Kanban Quick Actions</b></td>
+    <td align="center"><b>Mermaid Diagrams</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/vault-kanban-quick-action.png" alt="Kanban quick actions" width="480" /></td>
+    <td><img src="docs/vault-mermaid.png" alt="Mermaid diagrams in vault" width="480" /></td>
+  </tr>
+</table>
+
+---
 
 ## Features
 
-- **Chat** — Real-time conversation with your OpenClaw agent. Full history, file attachments, subtask awareness.
-- **Vault** — Markdown and media file viewer with fuzzy search, backed by the agent workspace on disk.
-- **Kanban** — Drag-and-drop task board stored as Obsidian-compatible markdown files.
+### Chat
 
-## Requirements
+- Real-time conversation with your OpenClaw agent via WebSocket
+- Full message history, preserved across sessions
+- File attachments — send documents and images to the agent
+- Streaming replies with live tool activity display
+- Actionable message buttons (retry, branch, edit)
+- Split view — chat alongside vault or kanban
+- Multiline input with Shift+Enter
+
+### Vault
+
+- Browse the agent workspace as a file tree
+- Render markdown with syntax highlighting and Mermaid diagrams
+- Fuzzy search across all vault files
+- Smart inline previews for vault links in chat
+- Upload, create, edit, and delete files
+- Auto-refresh after agent creates new files
+
+### Kanban
+
+- Drag-and-drop task board
+- Cards stored as Obsidian-compatible markdown files
+- AI quick actions on cards — summarize, break down, generate subtasks
+- Per-card chat tab for contextual AI conversations
+- Multiple boards per client
+
+### Knowledge Graph
+
+- Force-directed graph of vault file connections
+- Folder color coding and folder filter
+- Zoom, pan, and hover details
+- Orphan node toggle and text filter
+
+### Portal
+
+- Command palette (Ctrl+K) for quick navigation
+- Dark and light themes
+- Keyboard shortcuts for all major actions
+- Token-based authentication with per-client access
+- Session management — create, rename, and delete conversations
+- Background daemon mode with auto-start on login
+
+---
+
+## Quick Start
+
+### Requirements
 
 - Node.js 22+
-- OpenClaw installed and running
+- [OpenClaw](https://github.com/openclaw/openclaw) installed and running
 
-## Installation
+### Install
 
 ```bash
-git clone <repo-url> && cd knowspace
+git clone https://github.com/NinoCoelho/knowspace.git
+cd knowspace
 npm install
 npm link          # makes 'knowspace' available globally
 ```
 
-## Setup
-
-### 1. Connect to OpenClaw
-
-Detects your OpenClaw config, saves the connection, and installs the `knowspace-onboard` skill into the agent workspace:
+### Connect to OpenClaw
 
 ```bash
 knowspace connect
 ```
 
-### 2. Configure the portal
+Detects your OpenClaw gateway, saves the connection, and installs the onboard skill.
 
-Interactive wizard on first run — sets the gateway, configures the `main` vault path, and generates the first access token. Opens a menu on subsequent runs.
+### Configure
 
 ```bash
 knowspace configure
 ```
 
-### 3. Start
+Interactive wizard on first run — sets the gateway URL, configures your vault path, and generates the first access token.
 
-Run interactively:
+### Start
 
 ```bash
 knowspace serve              # default port 3445
@@ -58,79 +162,82 @@ Or install as a background daemon (auto-starts on login):
 knowspace daemon install
 ```
 
-The portal is available at `http://localhost:3445`. The access link is printed on first boot.
+Open the printed URL in your browser. Done.
 
 ---
 
 ## CLI Reference
 
-### `knowspace connect`
-
-Configures the OpenClaw connection and installs the onboard skill. Run once after installation, and again to reinstall the skill after updates.
-
-1. Reads `~/.openclaw/openclaw.json` to detect gateway URL and token
-2. Saves connection overrides to `~/.knowspace/.env` if needed
-3. Copies `knowspace-onboard` skill to the agent workspace (`~/.openclaw/workspace/skills/`)
-4. Registers the skill in `AGENTS.md`
-
-### `knowspace configure`
-
-Interactive setup. First run is a sequential wizard; subsequent runs open a menu.
-
 ```bash
-knowspace configure
+knowspace connect              # configure gateway + install onboard skill
+knowspace configure            # interactive setup wizard / menu
 knowspace configure --reset    # force wizard again
-```
-
-**Wizard steps:**
-1. **Gateway** — detects `~/.openclaw/openclaw.json`; confirm or enter an alternate path
-2. **Vault** — path to the `main` client's vault (default: `~/main/workspace/vault`; can point to iCloud, Obsidian, etc.)
-3. **Token** — generates the portal access link for slug `main`
-
-**Menu options** (subsequent runs): Gateway, Vault location, Skills, Access tokens, Environment keys, Workspace templates.
-
-### `knowspace serve`
-
-```bash
-knowspace serve [--port 3445]
-```
-
-### `knowspace daemon`
-
-Install and manage Knowspace as a system daemon. Uses `launchd` on macOS and `systemd --user` on Linux.
-
-```bash
-knowspace daemon install       # write service file, enable auto-start on login, start now
+knowspace serve                # start the portal (default port 3445)
+knowspace serve --port 4000
+knowspace daemon install       # write service file, enable auto-start, start now
 knowspace daemon uninstall     # stop and remove service file
 knowspace daemon start
 knowspace daemon stop
 knowspace daemon restart
-knowspace daemon status        # show running status and PID
+knowspace daemon status
 knowspace daemon logs          # tail -f ~/.knowspace/knowspace.log
-knowspace daemon logs --error  # tail error log instead
-```
-
-### `knowspace tokens`
-
-```bash
+knowspace daemon logs --error  # tail -f ~/.knowspace/knowspace.error.log
 knowspace tokens list
 knowspace tokens generate <slug>
 knowspace tokens rotate <slug>
 ```
 
+Daemon backend: `launchd` on macOS, `systemd --user` on Linux.
+
 ---
 
-## Vault Design
+## Multi-Client & Onboarding
 
-There are two kinds of clients:
+Knowspace supports multiple clients, each with their own workspace and access token.
 
-**Main client (`main`)** — configured manually via `knowspace configure`. The vault path can be set to any directory (e.g., an iCloud or Obsidian folder). Stored in `~/.knowspace/config.json`.
+**Main client** — configured manually via `knowspace configure`. The vault can point to any directory (iCloud, Obsidian vault, etc.).
 
-**Onboarded clients** — created by the agent via the `knowspace-onboard` skill. Their vault is always at `~/slug/workspace/vault`, created automatically during onboarding. To onboard a new client, ask your agent:
+**Onboarded clients** — created by the agent via the `knowspace-onboard` skill. To add a new client, just ask your agent:
 
 > "Onboard a new client, slug: acme-corp"
 
-The agent will create the workspace, register the agent with OpenClaw, generate a portal access token, and return the login link.
+The agent creates the workspace, registers with OpenClaw, generates an access token, and returns the login link.
+
+---
+
+## Architecture
+
+```
+Browser → Knowspace Portal → Adapter Layer → OpenClaw Gateway
+```
+
+Knowspace is a sidecar. It adds a product layer (web UI, CLI, auth, vault, kanban) without modifying OpenClaw. All engine interaction is isolated to the adapter layer (`adapters/engine/`).
+
+**Stack:** Node.js, Express, Socket.IO, vanilla JS, filesystem. No database.
+
+```
+server.js                    Express + Socket.IO server
+adapters/engine/             Engine adapter layer (barrier between Knowspace and OpenClaw)
+  index.js                     Barrel export
+  paths.js                     Engine path conventions, session key formats
+  messages.js                  Message normalization, filtering, status detection
+  sessions.js                  Session CRUD via gateway RPC
+  chat.js                      Chat: history, send, streaming poll
+lib/gateway.js               Low-level WebSocket RPC client (Ed25519 device auth)
+middleware/auth.js            Token authentication (SHA-256 hashed)
+routes/api.js                 REST API: vault, kanban, graph
+public/
+  index.html                   SPA entry point + all CSS
+  js/app.js                    Frontend (vanilla JS, no framework)
+bin/knowspace.js             CLI entry point
+cli/                         CLI commands (connect, configure, daemon, serve, tokens)
+skills/
+  knowspace-onboard/           Agent skill: onboards portal clients
+templates/                   Workspace markdown templates
+tests/adapters/              49 contract tests (node:test, no gateway needed)
+```
+
+**Rule:** `server.js` never imports `lib/gateway.js` directly. All engine calls go through `adapters/engine/`.
 
 ---
 
@@ -149,54 +256,61 @@ Set in shell or `~/.knowspace/.env`:
 
 ---
 
-## Architecture
+## Contributing
 
-Knowspace is a **sidecar** to OpenClaw. It adds a product layer (web UI, CLI, auth, vault) without modifying the engine. All engine interaction is isolated to the adapter layer.
+Knowspace is open source and we welcome contributions from the OpenClaw community.
 
-```
-server.js                    Express + Socket.IO server
-adapters/engine/
-  index.js                   Barrel export
-  paths.js                   Engine path conventions, session key formats
-  messages.js                Message normalization, filtering, status detection
-  sessions.js                Session CRUD via gateway RPC
-  chat.js                    Chat: history, send, streaming poll
-lib/gateway.js               Low-level WebSocket RPC client (Ed25519 auth)
-middleware/auth.js           Token authentication (SHA-256 hashed)
-routes/api.js                REST API: vault, kanban
-public/
-  index.html                 SPA entry point
-  js/app.js                  Frontend (vanilla JS)
-bin/knowspace.js             CLI entry point
-cli/
-  connect.js                 Configure gateway + install onboard skill
-  configure/                 Interactive wizard and menu
-    wizard.js                First-run: gateway → vault → token
-    menu.js                  Subsequent-run menu
-    gateway.js               OpenClaw detection and config
-    vault.js                 Vault path configuration
-    skills.js                Skill install + AGENTS.md registration
-    state.js                 ~/.knowspace/config.json read/write
-    env.js                   ~/.knowspace/.env read/write
-    prompts.js               readline-based interactive prompts
-  daemon.js                  Daemon lifecycle management
-  daemon/
-    launchd.js               macOS launchd backend
-    systemd.js               Linux systemd --user backend
-  serve.js                   Start server interactively
-  tokens.js                  Token management
-skills/
-  knowspace-onboard/         Agent skill: onboards portal clients
-templates/                   Workspace markdown templates (SOUL, USER, AGENTS, IDENTITY, MEMORY)
-tests/adapters/              49 contract tests for the adapter layer
-```
+**We're actively looking for:**
 
-**Rule:** `server.js` never imports `lib/gateway.js` directly. All engine calls go through `adapters/engine/`.
+- Frontend improvements (accessibility, responsive design, i18n)
+- New vault renderers (PDF, CSV/TSV tables, code notebooks)
+- Integrations (calendar, email, project management tools)
+- Testing and CI/CD
+- Documentation and examples
 
-**Stack:** Node.js, Express, Socket.IO, Vanilla JS, filesystem (no database).
+**How to contribute:**
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-feature`)
+3. Make your changes — keep the adapter boundary clean (`server.js` never imports `lib/gateway.js`)
+4. Run `npm test` to verify the adapter contract tests pass
+5. Open a pull request
+
+If you're building something with OpenClaw and want a web interface, this is the project for you. Open an issue to discuss ideas, or jump straight in with a PR.
 
 ---
 
 ## License
 
-Proprietary.
+MIT License
+
+Copyright (c) 2026 Idemir Dias Coelho
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Terms of Use
+
+Knowspace is provided as-is for use with [OpenClaw](https://github.com/openclaw/openclaw). By using this software, you agree that:
+
+- The software is provided under the MIT License with no warranty of any kind
+- You are responsible for securing your installation (tokens, network exposure, file access)
+- Client data is stored on your filesystem — you are responsible for backups and data protection compliance
+- The authors are not liable for any data loss, security incidents, or damages arising from use of the software
