@@ -76,24 +76,45 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Keyboard Shortcuts System
+// Auto-expand textarea up to maxRows, then scroll
+function autoExpandTextarea(el) {
+  if (!el) return;
+  const style = getComputedStyle(el);
+  const lineHeight = parseFloat(style.lineHeight) || 24;
+  const paddingTop = parseFloat(style.paddingTop) || 12;
+  const paddingBottom = parseFloat(style.paddingBottom) || 12;
+  const maxHeight = parseFloat(style.maxHeight) || 144;
+  const minRows = parseInt(el.rows) || 1;
+  const maxRows = Math.floor((maxHeight - paddingTop - paddingBottom) / lineHeight);
+  el.style.height = 'auto';
+  const scrollH = el.scrollHeight;
+  const lines = Math.ceil((scrollH - paddingTop - paddingBottom) / lineHeight);
+  const rows = Math.min(Math.max(lines, minRows), maxRows);
+  el.style.height = rows * lineHeight + paddingTop + paddingBottom + 'px';
+  el.style.overflowY = lines > maxRows ? 'auto' : 'hidden';
+}
+
 const shortcuts = {
   'cmd+k': () => openCommandPalette(),
-  'cmd+1': () => switchView('chat'),
-  'cmd+2': () => switchView('vault'),
-  'cmd+n': () => { if (currentView === 'chat') socket.emit('sessions:new'); },
+  'ctrl+k': () => openCommandPalette(),
+  'alt+1': () => switchView('chat'),
+  'alt+2': () => switchView('vault'),
+  'ctrl+n': () => { if (currentView === 'chat') socket.emit('sessions:new'); },
   'cmd+shift+f': () => openUnifiedSearch(),
-  'cmd+d': () => toggleTheme(),
+  'ctrl+shift+f': () => openUnifiedSearch(),
+  'ctrl+d': () => toggleTheme(),
   'cmd+/': () => showShortcutsModal(),
+  'ctrl+/': () => showShortcutsModal(),
   'escape': () => closeAllModals(),
 };
 
 function parseShortcut(e) {
   const parts = [];
-  if (e.metaKey || e.ctrlKey) parts.push('cmd');
+  if (e.metaKey) parts.push('cmd');
+  if (e.ctrlKey) parts.push('ctrl');
   if (e.shiftKey) parts.push('shift');
   if (e.altKey) parts.push('alt');
-  if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.key !== 'Escape') parts.push(e.key.toLowerCase());
-  else parts.push(e.key.toLowerCase());
+  parts.push(e.key.toLowerCase());
 
   return parts.join('+');
 }
@@ -115,7 +136,7 @@ function handleKeyboardShortcut(e) {
   }
 
   // Skip if in input field (except for shortcuts that should work in inputs)
-  if (isInput && !['escape', 'cmd+k', 'cmd+shift+f'].includes(parseShortcut(e))) {
+  if (isInput && !['escape', 'cmd+k', 'ctrl+k', 'cmd+shift+f', 'ctrl+shift+f'].includes(parseShortcut(e))) {
     return;
   }
 
@@ -746,7 +767,7 @@ const commands = [
     title: 'Go to Chat',
     description: 'Switch to chat view',
     icon: 'fa-comment',
-    shortcut: '⌘1',
+    shortcut: 'Alt+1',
     category: 'navigation',
     action: () => switchView('chat')
   },
@@ -755,7 +776,7 @@ const commands = [
     title: 'Go to Vault',
     description: 'Switch to vault view',
     icon: 'fa-folder',
-    shortcut: '⌘2',
+    shortcut: 'Alt+2',
     category: 'navigation',
     action: () => switchView('vault')
   },
@@ -764,7 +785,7 @@ const commands = [
     title: 'New Chat',
     description: 'Start a new conversation',
     icon: 'fa-plus',
-    shortcut: '⌘N',
+    shortcut: 'Ctrl+N',
     category: 'actions',
     action: () => {
       switchView('chat');
@@ -794,7 +815,7 @@ const commands = [
     title: 'Toggle Dark Mode',
     description: 'Switch between light and dark theme',
     icon: 'fa-moon',
-    shortcut: '⌘D',
+    shortcut: 'Ctrl+D',
     category: 'settings',
     action: () => toggleTheme()
   },
@@ -1172,7 +1193,7 @@ const graphState = {
   nodes: [], links: [], canvas: null, ctx: null,
   width: 0, height: 0, animFrame: null,
   dragging: null, panX: 0, panY: 0, panStart: null,
-  hoveredNode: null, filterText: '',
+  hoveredNode: null, filterText: '', folderFilter: '',
   nodeColorMap: {},
   zoom: 1, hideOrphans: false,
 };
@@ -1195,39 +1216,6 @@ async function loadGraph() {
   graphState.canvas = canvas;
   graphState.ctx = canvas.getContext('2d');
 
-  // Fetch graph data
-  try {
-    const resp = await fetch('/api/vault/graph');
-    const data = await resp.json();
-    graphState.nodes = (data.nodes || []).map((n, i) => ({
-      ...n,
-      x: 0, y: 0, vx: 0, vy: 0,
-      radius: 6, linkCount: 0,
-    }));
-    graphState.links = data.links || [];
-    graphState.nodeColorMap = {};
-
-    // Count links per node
-    for (const link of graphState.links) {
-      if (graphState.nodes[link.source]) graphState.nodes[link.source].linkCount++;
-      if (graphState.nodes[link.target]) graphState.nodes[link.target].linkCount++;
-    }
-
-    updateGraphNodeCount();
-
-    initGraphLayout();
-    startGraphSimulation();
-  } catch (e) {
-    console.error('Failed to load graph:', e);
-  }
-
-  // Resize observer
-  if (!canvas._ro) {
-    canvas._ro = new ResizeObserver(() => resizeGraphCanvas());
-    canvas._ro.observe(canvas.parentElement);
-  }
-  resizeGraphCanvas();
-
   // Event listeners (bind once)
   if (!canvas._bound) {
     canvas._bound = true;
@@ -1239,6 +1227,13 @@ async function loadGraph() {
     canvas.addEventListener('wheel', onGraphWheel, { passive: false });
     document.getElementById('graphFilter')?.addEventListener('input', e => {
       graphState.filterText = e.target.value.toLowerCase();
+      updateGraphVisibility();
+      updateGraphNodeCount();
+    });
+    document.getElementById('graphFolderFilter')?.addEventListener('change', e => {
+      graphState.folderFilter = e.target.value;
+      updateGraphVisibility();
+      updateGraphNodeCount();
     });
     document.getElementById('graphResetBtn')?.addEventListener('click', () => {
       initGraphLayout();
@@ -1265,22 +1260,75 @@ async function loadGraph() {
         btn.style.color = 'var(--text-primary)';
         btn.style.borderColor = 'var(--border-light)';
       }
+      updateGraphVisibility();
       updateGraphNodeCount();
     });
+  }
+
+  // Fetch graph data
+  try {
+    const resp = await fetch('/api/vault/graph');
+    const data = await resp.json();
+    graphState.nodes = (data.nodes || []).map((n, i) => ({
+      ...n,
+      x: 0, y: 0, vx: 0, vy: 0,
+      radius: 6, linkCount: 0,
+    }));
+    graphState.links = data.links || [];
+    graphState.nodeColorMap = {};
+
+    // Count links per node
+    for (const link of graphState.links) {
+      if (graphState.nodes[link.source]) graphState.nodes[link.source].linkCount++;
+      if (graphState.nodes[link.target]) graphState.nodes[link.target].linkCount++;
+    }
+
+    updateGraphNodeCount();
+    populateFolderFilter();
+
+    // Initialize layout and start simulation — renderGraph self-heals dimensions
+    initGraphLayout();
+    startGraphSimulation();
+  } catch (e) {
+    console.error('Failed to load graph:', e);
   }
 }
 
 function updateGraphNodeCount() {
-  const { nodes, links, hideOrphans } = graphState;
-  const visibleNodes = hideOrphans ? nodes.filter(n => n.linkCount > 0) : nodes;
-  const orphans = nodes.filter(n => n.linkCount === 0).length;
+  const { nodes, links, hideOrphans, folderFilter } = graphState;
+  const baseNodes = folderFilter
+    ? nodes.filter(n => (n.folder || '/').split('/')[0] === folderFilter)
+    : nodes;
+  const visibleNodes = hideOrphans ? baseNodes.filter(n => n.linkCount > 0) : baseNodes;
+  const orphans = baseNodes.filter(n => n.linkCount === 0).length;
   let text = `${visibleNodes.length} nodes · ${links.length} links`;
   if (orphans > 0) text += ` · ${orphans} orphans`;
   document.getElementById('graphNodeCount').textContent = text;
 }
 
+function populateFolderFilter() {
+  const select = document.getElementById('graphFolderFilter');
+  if (!select) return;
+  const folders = new Set();
+  for (const n of graphState.nodes) {
+    const top = (n.folder || '/').split('/')[0];
+    if (top) folders.add(top);
+  }
+  const sorted = [...folders].sort();
+  const prev = select.value;
+  select.innerHTML = '<option value="">All folders</option>';
+  for (const f of sorted) {
+    const opt = document.createElement('option');
+    opt.value = f;
+    opt.textContent = f;
+    select.appendChild(opt);
+  }
+  if (prev && sorted.includes(prev)) select.value = prev;
+}
+
 function fitGraphToWindow() {
   const { nodes, width, height, hideOrphans } = graphState;
+  if (!width || !height) return;
   const visible = nodes.filter(n => n.visible && !(hideOrphans && n.linkCount === 0));
   if (visible.length === 0) return;
 
@@ -1311,21 +1359,11 @@ function fitGraphToWindow() {
   graphState.zoom = zoom;
 }
 
-function resizeGraphCanvas() {
-  const canvas = graphState.canvas;
-  if (!canvas) return;
-  const parent = canvas.parentElement;
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = parent.clientWidth * dpr;
-  canvas.height = parent.clientHeight * dpr;
-  graphState.width = parent.clientWidth;
-  graphState.height = parent.clientHeight;
-  graphState.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-
 function initGraphLayout() {
-  const cx = graphState.width / 2 || 400;
-  const cy = graphState.height / 2 || 300;
+  // Read live dimensions from canvas layout
+  const rect = graphState.canvas?.getBoundingClientRect();
+  const cx = (rect ? rect.width : graphState.width) / 2 || 400;
+  const cy = (rect ? rect.height : graphState.height) / 2 || 300;
   const n = graphState.nodes.length;
   // Place nodes in a circle initially
   for (let i = 0; i < n; i++) {
@@ -1363,18 +1401,21 @@ function startGraphSimulation() {
   graphState.animFrame = requestAnimationFrame(tick);
 }
 
+function updateGraphVisibility() {
+  const { nodes, filterText, folderFilter, hideOrphans } = graphState;
+  for (const node of nodes) {
+    const matchesFilter = !filterText || node.label.toLowerCase().includes(filterText) ||
+      node.folder.toLowerCase().includes(filterText) || node.id.toLowerCase().includes(filterText);
+    const matchesFolder = !folderFilter || (node.folder || '/').split('/')[0] === folderFilter;
+    node.visible = matchesFilter && matchesFolder && !(hideOrphans && node.linkCount === 0);
+  }
+}
+
 function simulateForces(cooling) {
   const nodes = graphState.nodes;
   const links = graphState.links;
-  const filter = graphState.filterText;
-  const hideOrphans = graphState.hideOrphans;
 
-  // Visibility
-  for (const node of nodes) {
-    const matchesFilter = !filter || node.label.toLowerCase().includes(filter) ||
-      node.folder.toLowerCase().includes(filter) || node.id.toLowerCase().includes(filter);
-    node.visible = matchesFilter && !(hideOrphans && node.linkCount === 0);
-  }
+  updateGraphVisibility();
 
   // Repulsion (Coulomb)
   for (let i = 0; i < nodes.length; i++) {
@@ -1427,20 +1468,41 @@ function simulateForces(cooling) {
 }
 
 function renderGraph() {
-  const { ctx, nodes, links, width, height, panX, panY, zoom, hoveredNode, filter } = graphState;
-  if (!ctx || !width) return;
+  const { ctx, nodes, links, panX, panY, zoom, hoveredNode } = graphState;
+  if (!ctx) return;
+
+  // Self-heal: read live dimensions from canvas layout
+  const canvas = graphState.canvas;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = rect.width;
+  const h = rect.height;
+  if (!w || !h) return;
+
+  // Only resize buffer when dimensions actually changed (avoids clearing canvas unnecessarily)
+  const bufW = Math.round(w * dpr);
+  const bufH = Math.round(h * dpr);
+  if (canvas.width !== bufW || canvas.height !== bufH) {
+    canvas.width = bufW;
+    canvas.height = bufH;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  graphState.width = w;
+  graphState.height = h;
 
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  ctx.clearRect(0, 0, width, height);
+  ctx.clearRect(0, 0, w, h);
   ctx.save();
   // Zoom from center, then pan
-  ctx.translate(width / 2, height / 2);
+  ctx.translate(w / 2, h / 2);
   ctx.scale(zoom, zoom);
-  ctx.translate(-width / 2, -height / 2);
+  ctx.translate(-w / 2, -h / 2);
   ctx.translate(panX, panY);
 
+  // Inverse zoom factor for zoom-independent sizes
+  const iz = 1 / zoom;
+
   // Draw links
-  ctx.lineWidth = 1;
   for (const link of links) {
     const src = nodes[link.source];
     const tgt = nodes[link.target];
@@ -1449,7 +1511,7 @@ function renderGraph() {
     ctx.strokeStyle = highlighted
       ? (isDark ? 'rgba(212,165,116,0.5)' : 'rgba(139,94,60,0.4)')
       : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
-    ctx.lineWidth = highlighted ? 2 : 1;
+    ctx.lineWidth = (highlighted ? 2 : 1) * iz;
     ctx.beginPath();
     ctx.moveTo(src.x, src.y);
     ctx.lineTo(tgt.x, tgt.y);
@@ -1468,12 +1530,12 @@ function renderGraph() {
 
     const color = getFolderColor(node.folder, graphState.nodeColorMap);
     const alpha = dimmed ? 0.2 : 1;
-    const r = isHovered ? 9 : 6;
+    const r = (isHovered ? 9 : 6) * iz;
 
     // Glow for hovered
     if (isHovered) {
       ctx.shadowColor = color;
-      ctx.shadowBlur = 12;
+      ctx.shadowBlur = 12 * iz;
     }
 
     ctx.globalAlpha = alpha;
@@ -1485,13 +1547,14 @@ function renderGraph() {
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
 
-    // Label — show when zoomed in enough or for connected nodes
-    const showLabel = isHovered || (graphState.zoom > 0.8 && (node.linkCount > 0 || nodes.length < 40));
+    // Label — show when not too zoomed out
+    const showLabel = isHovered || (zoom > 0.4 && (node.linkCount > 0 || nodes.length < 40));
     if (showLabel) {
-      ctx.font = isHovered ? 'bold 12px -apple-system, sans-serif' : '10px -apple-system, sans-serif';
+      const fontSize = (isHovered ? 12 : 10) * iz;
+      ctx.font = isHovered ? `bold ${fontSize}px -apple-system, sans-serif` : `${fontSize}px -apple-system, sans-serif`;
       ctx.fillStyle = isDark ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
       ctx.textAlign = 'center';
-      ctx.fillText(node.label, node.x, node.y + r + 14);
+      ctx.fillText(node.label, node.x, node.y + r + 10 * iz);
     }
     ctx.globalAlpha = 1;
   }
@@ -2102,6 +2165,10 @@ function asParam() {
 const messagesDiv = document.getElementById('messages');
 const messageInput = document.getElementById('messageInput');
 const sendButton = document.getElementById('sendButton');
+// Auto-expand message input on input
+messageInput?.addEventListener('input', () => autoExpandTextarea(messageInput));
+// Reset height when message is sent
+const origResetAfterSend = () => { if (messageInput) { messageInput.style.height = ''; messageInput.style.overflowY = 'auto'; } };
 const vaultTree = document.getElementById('vaultTree');
 const vaultContent = document.getElementById('vaultContent');
 
@@ -3809,6 +3876,7 @@ if (chatUploadInput) {
 
 // Split view chat elements
 const messageInputSplit = document.getElementById('messageInputSplit');
+messageInputSplit?.addEventListener('input', () => autoExpandTextarea(messageInputSplit));
 const sendButtonSplit = document.getElementById('sendButtonSplit');
 const chatUploadBtnSplit = document.getElementById('chatUploadBtnSplit');
 const chatFilePreviewSplit = document.getElementById('chatFilePreviewSplit');
@@ -3832,6 +3900,7 @@ sendButtonSplit?.addEventListener('click', () => {
 
   // Copy message back to split view
   messageInputSplit.value = messageInput.value;
+  autoExpandTextarea(messageInputSplit);
   pendingFiles = [];
 });
 
@@ -4025,6 +4094,7 @@ function sendMessage() {
   messageInput.value = '';
   pendingFiles = [];
   renderFilePreview();
+  origResetAfterSend();
 }
 
 function slugLabel(slug) {
@@ -6466,7 +6536,9 @@ document.getElementById('cardChatContextToggle')?.addEventListener('click', () =
 
 // Send message handler
 document.getElementById('cardChatSend')?.addEventListener('click', sendCardChatMessage);
-document.getElementById('cardChatInput')?.addEventListener('keydown', (e) => {
+const cardChatInput = document.getElementById('cardChatInput');
+cardChatInput?.addEventListener('input', () => autoExpandTextarea(cardChatInput));
+cardChatInput?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendCardChatMessage();
@@ -6554,6 +6626,7 @@ async function sendCardChatMessage() {
   if (!card) return;
 
   input.value = '';
+  autoExpandTextarea(input);
   cardChatLoading = true;
 
   const msgContainer = document.getElementById('cardChatMessages');

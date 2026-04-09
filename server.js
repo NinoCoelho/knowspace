@@ -569,6 +569,10 @@ io.on('connection', async (socket) => {
       // Ensure we have an active session
       if (!socket.activeSessionKey) {
         socket.activeSessionKey = await engine.sessions.createSession(socket.clientSlug);
+        // Immediately notify client of the new session so the sidebar updates
+        socket.emit('chat:history', { messages: [], sessionKey: socket.activeSessionKey });
+        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        socket.emit('sessions:list', { sessions });
       }
 
       const sessionKey = socket.activeSessionKey;

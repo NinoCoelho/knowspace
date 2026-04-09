@@ -2683,10 +2683,10 @@
                 <i class="fas fa-paperclip"></i>
               </button>
               <div class="flex-1 relative">
-                <input type="text" id="messageInputSplit"
+                <textarea id="messageInputSplit" rows="1"
                        class="w-full px-4 py-3 rounded-xl border-0 focus:outline-none focus:ring-2"
-                       style="background: var(--bg-secondary);"
-                       placeholder="Type a message..." autocomplete="off">
+                       style="background: var(--bg-secondary); resize: none; overflow-y: auto; min-height: 48px; max-height: 144px; line-height: 1.5;"
+                       placeholder="Type a message... (Shift+Enter for new line)" autocomplete="off"></textarea>
                 <div id="autocompleteDropdownSplit" class="hidden absolute bottom-full left-0 right-0 mb-1 rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto z-50" style="background: var(--bg-secondary); border: 1px solid var(--border-light);"></div>
               </div>
               <button id="sendButtonSplit"
@@ -2885,10 +2885,10 @@
             </div>
             <input type="file" id="chatUploadInput" class="hidden" multiple>
             <div class="flex-1 relative">
-              <input type="text" id="messageInput"
+              <textarea id="messageInput" rows="1"
                      class="w-full px-4 py-3 rounded-xl border-0 focus:outline-none focus:ring-2"
-                     style="background: var(--bg-secondary);"
-                     placeholder="Type a message..." autocomplete="off">
+                     style="background: var(--bg-secondary); resize: none; overflow-y: auto; min-height: 48px; max-height: 144px; line-height: 1.5;"
+                     placeholder="Type a message... (Shift+Enter for new line)" autocomplete="off"></textarea>
               <div id="autocompleteDropdown" class="hidden absolute bottom-full left-0 right-0 mb-1 rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto z-50" style="background: var(--bg-secondary); border: 1px solid var(--border-light);"></div>
               <div id="fileSuggestions" class="hidden mt-2 flex flex-wrap gap-2 px-1">
                 <!-- File suggestion chips will be inserted here -->
@@ -2941,6 +2941,9 @@
           </div>
           <div class="flex items-center gap-2">
             <input type="text" id="graphFilter" placeholder="Filter nodes..." class="px-3 py-1.5 rounded-lg border-0 text-xs" style="background: var(--bg-secondary); color: var(--text-primary); width: 180px;" autocomplete="off">
+            <select id="graphFolderFilter" class="px-3 py-1.5 rounded-lg border-0 text-xs" style="background: var(--bg-secondary); color: var(--text-primary); cursor: pointer;">
+              <option value="">All folders</option>
+            </select>
             <button id="graphHideOrphansBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" title="Toggle orphan nodes">
               <i class="fas fa-unlink"></i>
             </button>
@@ -3014,7 +3017,7 @@
         <div id="cardChatMessages" style="flex:1; overflow-y:auto; padding:12px;"></div>
         <!-- Input -->
         <div style="display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--border-light);">
-          <input type="text" id="cardChatInput" class="flex-1 px-3 py-2 rounded-lg border-0 text-sm" style="background:var(--bg-secondary);" placeholder="Ask about this card..." autocomplete="off">
+          <textarea id="cardChatInput" rows="1" class="flex-1 px-3 py-2 rounded-lg border-0 text-sm" style="background:var(--bg-secondary); resize: none; overflow-y: auto; min-height: 36px; max-height: 108px; line-height: 1.4;" placeholder="Ask about this card... (Shift+Enter for new line)" autocomplete="off"></textarea>
           <button id="cardChatSend" style="background:var(--accent-primary);color:white;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">
             <i class="fas fa-paper-plane"></i>
           </button>
@@ -3048,11 +3051,11 @@
             <h4 style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 12px;">Navigation</h4>
             <div class="shortcut-item flex items-center justify-between py-2" style="border-bottom: 1px solid var(--border-light);">
               <span style="font-size: 14px;">Go to Chat</span>
-              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Cmd/Ctrl + 1</kbd>
+              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Alt + 1</kbd>
             </div>
             <div class="shortcut-item flex items-center justify-between py-2" style="border-bottom: 1px solid var(--border-light);">
               <span style="font-size: 14px;">Go to Vault</span>
-              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Cmd/Ctrl + 2</kbd>
+              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Alt + 2</kbd>
             </div>
           </div>
           <div class="shortcut-category mb-4">
@@ -3067,15 +3070,19 @@
             </div>
             <div class="shortcut-item flex items-center justify-between py-2" style="border-bottom: 1px solid var(--border-light);">
               <span style="font-size: 14px;">New Chat</span>
-              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Cmd/Ctrl + N</kbd>
+              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Ctrl + N</kbd>
             </div>
             <div class="shortcut-item flex items-center justify-between py-2" style="border-bottom: 1px solid var(--border-light);">
               <span style="font-size: 14px;">Send Message</span>
               <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Enter</kbd>
             </div>
+            <div class="shortcut-item flex items-center justify-between py-2" style="border-bottom: 1px solid var(--border-light);">
+              <span style="font-size: 14px;">New Line</span>
+              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Shift + Enter</kbd>
+            </div>
             <div class="shortcut-item flex items-center justify-between py-2">
               <span style="font-size: 14px;">Toggle Dark Mode</span>
-              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Cmd/Ctrl + D</kbd>
+              <kbd style="background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit;">Ctrl + D</kbd>
             </div>
           </div>
           <div class="shortcut-category">
