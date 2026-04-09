@@ -2960,6 +2960,45 @@
     </div>
   </div>
 
+  <!-- Reusable Input Modal (replaces prompt()) -->
+  <div id="inputModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 id="inputModalTitle">Input</h3>
+        <button id="closeInputModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="inputModalMessage" style="font-size:14px;color:var(--text-secondary);margin-bottom:12px;"></p>
+        <input type="text" id="inputModalField" class="w-full px-3 py-2 rounded-lg border" style="border-color:var(--border-light);background:var(--bg-primary);color:var(--text-primary);font-size:14px;" autocomplete="off">
+      </div>
+      <div class="modal-footer">
+        <button id="inputModalCancel" class="px-4 py-2 rounded-lg text-sm font-medium" style="background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-primary);cursor:pointer;">Cancel</button>
+        <button id="inputModalConfirm" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background:var(--accent-primary);border:none;cursor:pointer;">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reusable Confirm Modal (replaces confirm()) -->
+  <div id="confirmModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3 id="confirmModalTitle">Confirm</h3>
+        <button id="closeConfirmModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmModalMessage" style="font-size:14px;color:var(--text-secondary);"></p>
+      </div>
+      <div class="modal-footer">
+        <button id="confirmModalCancel" class="px-4 py-2 rounded-lg text-sm font-medium" style="background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-primary);cursor:pointer;">Cancel</button>
+        <button id="confirmModalConfirm" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background:#ef4444;border:none;cursor:pointer;">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Command Palette Modal -->
   <div id="commandPalette" class="command-palette-overlay hidden">
     <div class="command-palette">

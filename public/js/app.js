@@ -166,8 +166,88 @@ function closeAllModals() {
   hideAllTasks();
   hideAllFiles();
 
+  // Close input/confirm modals
+  document.getElementById('inputModal')?.classList.add('hidden');
+  document.getElementById('confirmModal')?.classList.add('hidden');
+
   // Close any other overlays
   document.querySelectorAll('.vault-modal-overlay, .lightbox-overlay').forEach(el => el.remove());
+}
+
+// Reusable modal dialogs (replace native prompt/confirm)
+function showPrompt(title, message, defaultValue = '') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('inputModal');
+    const titleEl = document.getElementById('inputModalTitle');
+    const msgEl = document.getElementById('inputModalMessage');
+    const field = document.getElementById('inputModalField');
+    const confirmBtn = document.getElementById('inputModalConfirm');
+    const cancelBtn = document.getElementById('inputModalCancel');
+    const closeBtn = document.getElementById('closeInputModal');
+
+    titleEl.textContent = title || 'Input';
+    msgEl.textContent = message || '';
+    field.value = defaultValue;
+
+    modal.classList.remove('hidden');
+    setTimeout(() => { field.focus(); field.select(); }, 50);
+
+    function cleanup(value) {
+      modal.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      closeBtn.removeEventListener('click', onCancel);
+      field.removeEventListener('keydown', onKey);
+      modal.removeEventListener('click', onOverlay);
+      resolve(value);
+    }
+
+    function onConfirm() { cleanup(field.value || ''); }
+    function onCancel() { cleanup(null); }
+    function onKey(e) { if (e.key === 'Enter') onConfirm(); if (e.key === 'Escape') onCancel(); }
+    function onOverlay(e) { if (e.target === modal) onCancel(); }
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    closeBtn.addEventListener('click', onCancel);
+    field.addEventListener('keydown', onKey);
+    modal.addEventListener('click', onOverlay);
+  });
+}
+
+function showConfirm(title, message, confirmLabel = 'Delete') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirmModal');
+    const titleEl = document.getElementById('confirmModalTitle');
+    const msgEl = document.getElementById('confirmModalMessage');
+    const confirmBtn = document.getElementById('confirmModalConfirm');
+    const cancelBtn = document.getElementById('confirmModalCancel');
+    const closeBtn = document.getElementById('closeConfirmModal');
+
+    titleEl.textContent = title || 'Confirm';
+    msgEl.textContent = message || '';
+    confirmBtn.textContent = confirmLabel;
+
+    modal.classList.remove('hidden');
+
+    function cleanup(value) {
+      modal.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      closeBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onOverlay);
+      resolve(value);
+    }
+
+    function onConfirm() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    function onOverlay(e) { if (e.target === modal) onCancel(); }
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    closeBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onOverlay);
+  });
 }
 
 // Chat Plus Menu (replaces FAB)
@@ -565,7 +645,7 @@ async function savePrompt() {
 }
 
 async function deletePrompt(promptId) {
-  if (!confirm('Are you sure you want to delete this prompt?')) return;
+  if (!(await showConfirm('Delete Prompt', 'Are you sure you want to delete this prompt?'))) return;
 
   try {
     const res = await fetch(`/api/prompts?token=${token}${asParam()}&id=${encodeURIComponent(promptId)}`, {
@@ -585,7 +665,7 @@ async function deletePrompt(promptId) {
   }
 }
 
-function usePrompt(promptId) {
+async function usePrompt(promptId) {
   const prompt = prompts.find(p => p.id === promptId);
   if (!prompt) return;
 
@@ -594,7 +674,7 @@ function usePrompt(promptId) {
 
   // Check if prompt has placeholder
   if (prompt.content.includes('{topic}')) {
-    const topic = prompt('Enter topic for the prompt:');
+    const topic = await showPrompt('Topic', 'Enter the topic for this prompt:');
     if (topic) {
       messageInput.value = prompt.content.replace('{topic}', topic);
     }
@@ -1466,7 +1546,7 @@ document.querySelectorAll('.quick-prompt-btn').forEach(btn => {
 
 // Quick actions
 document.querySelectorAll('.quick-action-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const action = btn.dataset.action;
 
     switch (action) {
@@ -1475,12 +1555,12 @@ document.querySelectorAll('.quick-action-btn').forEach(btn => {
         socket.emit('sessions:new');
         break;
       case 'new-kanban':
-        switchView('vault');
-        document.getElementById('sidebarVault')?.classList.remove('hidden');
-        document.getElementById('sidebarChat')?.classList.add('hidden');
-        const name = prompt('Board name:');
-        if (name) {
-          createNewKanbanBoard(name);
+        const boardName = await showPrompt('New Board', 'Enter a name for the new board:');
+        if (boardName) {
+          switchView('vault');
+          document.getElementById('sidebarVault')?.classList.remove('hidden');
+          document.getElementById('sidebarChat')?.classList.add('hidden');
+          createNewKanbanBoard(boardName);
         }
         break;
       case 'upload':
@@ -1638,16 +1718,16 @@ function renderSessionList() {
       switchView('chat');
       socket.emit('sessions:switch', { sessionKey: session.key });
     });
-    div.querySelector('.rename-session').addEventListener('click', (e) => {
+    div.querySelector('.rename-session').addEventListener('click', async (e) => {
       e.stopPropagation();
-      const newName = prompt('Rename conversation:', session.label || '');
-      if (newName && newName.trim()) {
+      const newName = await showPrompt('Rename Conversation', 'Enter new name:', session.label || '');
+      if (newName !== null && newName.trim()) {
         socket.emit('sessions:rename', { sessionKey: session.key, name: newName.trim() });
       }
     });
-    div.querySelector('.delete-session').addEventListener('click', (e) => {
+    div.querySelector('.delete-session').addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (confirm('Delete this conversation?')) {
+      if (await showConfirm('Delete Conversation', 'Are you sure you want to delete this conversation?')) {
         socket.emit('sessions:delete', { sessionKey: session.key });
       }
     });
@@ -4518,7 +4598,7 @@ document.getElementById('vaultEditBtn').addEventListener('click', async () => {
 
 document.getElementById('vaultDeleteBtn').addEventListener('click', async () => {
   if (!currentFile) return;
-  if (!confirm(`Delete "${currentFile.path}"?`)) return;
+  if (!(await showConfirm('Delete File', `Delete "${currentFile.path}"? This cannot be undone.`))) return;
 
   await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(currentFile.path)}`, {
     method: 'DELETE'
@@ -4663,8 +4743,8 @@ document.getElementById('vaultMoveBtn').addEventListener('click', async () => {
       .filter(Boolean)
   )].sort();
 
-  const folderList = folders.length ? folders.join('\n') : '(root)';
-  const dest = prompt(`Move "${currentFile.path.split('/').pop()}" to folder:\nAvailable folders:\n${folderList}\n\nEnter folder path (leave empty for root):`);
+  const folderList = folders.length ? folders.join(', ') : '(root only)';
+  const dest = await showPrompt('Move File', `Move "${currentFile.path.split('/').pop()}" to folder.\nAvailable: ${folderList}`, '');
   if (dest === null) return; // cancelled
 
   const filename = currentFile.path.split('/').pop();
@@ -4729,16 +4809,17 @@ function renderKanbanList() {
       loadKanban();
       renderKanbanList();
     });
-    div.querySelector('.rename-kanban').addEventListener('click', (e) => {
+    div.querySelector('.rename-kanban').addEventListener('click', async (e) => {
       e.stopPropagation();
-      const newName = prompt('Rename board:', board.title);
-      if (!newName || !newName.trim()) return;
-      renameKanbanBoard(board.file, newName.trim());
+      const newName = await showPrompt('Rename Board', 'Enter new name:', board.title);
+      if (newName !== null && newName.trim()) {
+        renameKanbanBoard(board.file, newName.trim());
+      }
     });
-    div.querySelector('.delete-kanban').addEventListener('click', (e) => {
+    div.querySelector('.delete-kanban').addEventListener('click', async (e) => {
       e.stopPropagation();
       if (kanbanBoards.length <= 1) { showToast('Cannot delete the last board.', 'warning'); return; }
-      if (!confirm(`Delete "${board.title}"?`)) return;
+      if (!(await showConfirm('Delete Board', `Delete "${board.title}"? This cannot be undone.`))) return;
       deleteKanbanBoard(board.file);
     });
     list.appendChild(div);
@@ -4781,7 +4862,7 @@ async function deleteKanbanBoard(file) {
 
 const newKanbanBtnEl = document.getElementById('newKanbanBtn');
 if (newKanbanBtnEl) newKanbanBtnEl.addEventListener('click', async () => {
-  const name = prompt('Board name:');
+  const name = await showPrompt('New Board', 'Enter a name for the new board:');
   if (!name || !name.trim()) return;
   // Generate unique filename that won't conflict
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -5014,8 +5095,8 @@ function addCard(laneId, title) {
   }
 }
 
-function deleteCard(laneId, cardId) {
-  if (confirm('Delete this card?')) {
+async function deleteCard(laneId, cardId) {
+  if (await showConfirm('Delete Card', 'Delete this card?')) {
     const lane = currentKanban.lanes.find(l => l.id === laneId);
     if (lane) {
       lane.cards = lane.cards.filter(c => c.id !== cardId);
@@ -5037,8 +5118,8 @@ function moveCard(sourceLaneId, targetLaneId, cardIndex) {
   }
 }
 
-function addLane() {
-  const title = prompt('Enter lane title:');
+async function addLane() {
+  const title = await showPrompt('New Lane', 'Enter a title for the new lane:');
   if (title) {
     currentKanban.lanes.push({
       id: Date.now().toString(),
