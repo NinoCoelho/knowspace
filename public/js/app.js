@@ -1167,6 +1167,441 @@ document.getElementById('unifiedSearchModal')?.addEventListener('click', (e) => 
   if (e.target.id === 'unifiedSearchModal') hideUnifiedSearch();
 });
 
+// Graph View — Canvas-based force-directed vault graph
+const graphState = {
+  nodes: [], links: [], canvas: null, ctx: null,
+  width: 0, height: 0, animFrame: null,
+  dragging: null, panX: 0, panY: 0, panStart: null,
+  hoveredNode: null, filterText: '',
+  nodeColorMap: {},
+  zoom: 1, hideOrphans: false,
+};
+
+// Folder color palette
+const GRAPH_COLORS = [
+  '#8B5E3C','#3B82F6','#10B981','#F59E0B','#EF4444',
+  '#8B5CF6','#EC4899','#06B6D4','#84CC16','#F97316',
+];
+
+function getFolderColor(folder, map) {
+  if (!folder) folder = '/';
+  if (!map[folder]) map[folder] = GRAPH_COLORS[Object.keys(map).length % GRAPH_COLORS.length];
+  return map[folder];
+}
+
+async function loadGraph() {
+  const canvas = document.getElementById('graphCanvas');
+  if (!canvas) return;
+  graphState.canvas = canvas;
+  graphState.ctx = canvas.getContext('2d');
+
+  // Fetch graph data
+  try {
+    const resp = await fetch('/api/vault/graph');
+    const data = await resp.json();
+    graphState.nodes = (data.nodes || []).map((n, i) => ({
+      ...n,
+      x: 0, y: 0, vx: 0, vy: 0,
+      radius: 6, linkCount: 0,
+    }));
+    graphState.links = data.links || [];
+    graphState.nodeColorMap = {};
+
+    // Count links per node
+    for (const link of graphState.links) {
+      if (graphState.nodes[link.source]) graphState.nodes[link.source].linkCount++;
+      if (graphState.nodes[link.target]) graphState.nodes[link.target].linkCount++;
+    }
+
+    updateGraphNodeCount();
+
+    initGraphLayout();
+    startGraphSimulation();
+  } catch (e) {
+    console.error('Failed to load graph:', e);
+  }
+
+  // Resize observer
+  if (!canvas._ro) {
+    canvas._ro = new ResizeObserver(() => resizeGraphCanvas());
+    canvas._ro.observe(canvas.parentElement);
+  }
+  resizeGraphCanvas();
+
+  // Event listeners (bind once)
+  if (!canvas._bound) {
+    canvas._bound = true;
+    canvas.addEventListener('mousedown', onGraphMouseDown);
+    canvas.addEventListener('mousemove', onGraphMouseMove);
+    canvas.addEventListener('mouseup', onGraphMouseUp);
+    canvas.addEventListener('mouseleave', onGraphMouseUp);
+    canvas.addEventListener('dblclick', onGraphDblClick);
+    canvas.addEventListener('wheel', onGraphWheel, { passive: false });
+    document.getElementById('graphFilter')?.addEventListener('input', e => {
+      graphState.filterText = e.target.value.toLowerCase();
+    });
+    document.getElementById('graphResetBtn')?.addEventListener('click', () => {
+      initGraphLayout();
+      graphState.panX = 0;
+      graphState.panY = 0;
+      graphState.zoom = 1;
+    });
+    document.getElementById('graphFitBtn')?.addEventListener('click', fitGraphToWindow);
+    document.getElementById('graphZoomInBtn')?.addEventListener('click', () => {
+      graphState.zoom = Math.min(5, graphState.zoom * 1.3);
+    });
+    document.getElementById('graphZoomOutBtn')?.addEventListener('click', () => {
+      graphState.zoom = Math.max(0.1, graphState.zoom / 1.3);
+    });
+    document.getElementById('graphHideOrphansBtn')?.addEventListener('click', () => {
+      graphState.hideOrphans = !graphState.hideOrphans;
+      const btn = document.getElementById('graphHideOrphansBtn');
+      if (graphState.hideOrphans) {
+        btn.style.background = 'var(--accent-primary)';
+        btn.style.color = 'white';
+        btn.style.borderColor = 'var(--accent-primary)';
+      } else {
+        btn.style.background = 'var(--bg-secondary)';
+        btn.style.color = 'var(--text-primary)';
+        btn.style.borderColor = 'var(--border-light)';
+      }
+      updateGraphNodeCount();
+    });
+  }
+}
+
+function updateGraphNodeCount() {
+  const { nodes, links, hideOrphans } = graphState;
+  const visibleNodes = hideOrphans ? nodes.filter(n => n.linkCount > 0) : nodes;
+  const orphans = nodes.filter(n => n.linkCount === 0).length;
+  let text = `${visibleNodes.length} nodes · ${links.length} links`;
+  if (orphans > 0) text += ` · ${orphans} orphans`;
+  document.getElementById('graphNodeCount').textContent = text;
+}
+
+function fitGraphToWindow() {
+  const { nodes, width, height, hideOrphans } = graphState;
+  const visible = nodes.filter(n => n.visible && !(hideOrphans && n.linkCount === 0));
+  if (visible.length === 0) return;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of visible) {
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y > maxY) maxY = n.y;
+  }
+
+  const padding = 60;
+  const graphW = (maxX - minX) || 1;
+  const graphH = (maxY - minY) || 1;
+  const scaleX = (width - padding * 2) / graphW;
+  const scaleY = (height - padding * 2) / graphH;
+  const zoom = Math.min(scaleX, scaleY, 2); // cap at 2x
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+
+  // We want the center of the graph to land at the center of the viewport.
+  // Render transform: translate(w/2, h/2) scale(zoom) translate(-w/2, -h/2) translate(panX, panY)
+  // So world point cx,cy maps to screen: w/2 + zoom*(cx - w/2 + panX), same for y
+  // We want that to equal w/2:  zoom*(cx - w/2 + panX) = 0  =>  panX = w/2 - cx
+  graphState.panX = width / 2 - cx;
+  graphState.panY = height / 2 - cy;
+  graphState.zoom = zoom;
+}
+
+function resizeGraphCanvas() {
+  const canvas = graphState.canvas;
+  if (!canvas) return;
+  const parent = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = parent.clientWidth * dpr;
+  canvas.height = parent.clientHeight * dpr;
+  graphState.width = parent.clientWidth;
+  graphState.height = parent.clientHeight;
+  graphState.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function initGraphLayout() {
+  const cx = graphState.width / 2 || 400;
+  const cy = graphState.height / 2 || 300;
+  const n = graphState.nodes.length;
+  // Place nodes in a circle initially
+  for (let i = 0; i < n; i++) {
+    const angle = (2 * Math.PI * i) / n;
+    const r = Math.min(cx, cy) * 0.7;
+    graphState.nodes[i].x = cx + r * Math.cos(angle);
+    graphState.nodes[i].y = cy + r * Math.sin(angle);
+    graphState.nodes[i].vx = 0;
+    graphState.nodes[i].vy = 0;
+  }
+}
+
+function startGraphSimulation() {
+  if (graphState.animFrame) cancelAnimationFrame(graphState.animFrame);
+
+  let iterations = 0;
+  const maxIterations = 600;
+
+  function tick() {
+    iterations++;
+    const cooling = Math.max(0.01, 1 - iterations / maxIterations);
+    simulateForces(cooling);
+    renderGraph();
+    if (iterations < maxIterations) {
+      graphState.animFrame = requestAnimationFrame(tick);
+    } else {
+      // Keep rendering for interactivity but stop physics
+      function idleRender() {
+        renderGraph();
+        graphState.animFrame = requestAnimationFrame(idleRender);
+      }
+      graphState.animFrame = requestAnimationFrame(idleRender);
+    }
+  }
+  graphState.animFrame = requestAnimationFrame(tick);
+}
+
+function simulateForces(cooling) {
+  const nodes = graphState.nodes;
+  const links = graphState.links;
+  const filter = graphState.filterText;
+  const hideOrphans = graphState.hideOrphans;
+
+  // Visibility
+  for (const node of nodes) {
+    const matchesFilter = !filter || node.label.toLowerCase().includes(filter) ||
+      node.folder.toLowerCase().includes(filter) || node.id.toLowerCase().includes(filter);
+    node.visible = matchesFilter && !(hideOrphans && node.linkCount === 0);
+  }
+
+  // Repulsion (Coulomb)
+  for (let i = 0; i < nodes.length; i++) {
+    if (!nodes[i].visible) continue;
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (!nodes[j].visible) continue;
+      let dx = nodes[j].x - nodes[i].x;
+      let dy = nodes[j].y - nodes[i].y;
+      let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const repulsion = 2000 / (dist * dist);
+      const fx = (dx / dist) * repulsion;
+      const fy = (dy / dist) * repulsion;
+      nodes[i].vx -= fx;
+      nodes[i].vy -= fy;
+      nodes[j].vx += fx;
+      nodes[j].vy += fy;
+    }
+  }
+
+  // Attraction (spring along links)
+  for (const link of links) {
+    const src = nodes[link.source];
+    const tgt = nodes[link.target];
+    if (!src.visible || !tgt.visible) continue;
+    const dx = tgt.x - src.x;
+    const dy = tgt.y - src.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const force = (dist - 80) * 0.01;
+    const fx = (dx / dist) * force;
+    const fy = (dy / dist) * force;
+    src.vx += fx;
+    src.vy += fy;
+    tgt.vx -= fx;
+    tgt.vy -= fy;
+  }
+
+  // Center gravity
+  const cx = graphState.width / 2;
+  const cy = graphState.height / 2;
+  for (const node of nodes) {
+    if (!node.visible) continue;
+    if (node === graphState.dragging) continue;
+    node.vx += (cx - node.x) * 0.001;
+    node.vy += (cy - node.y) * 0.001;
+    node.vx *= 0.6 * cooling;
+    node.vy *= 0.6 * cooling;
+    node.x += node.vx * cooling;
+    node.y += node.vy * cooling;
+  }
+}
+
+function renderGraph() {
+  const { ctx, nodes, links, width, height, panX, panY, zoom, hoveredNode, filter } = graphState;
+  if (!ctx || !width) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  // Zoom from center, then pan
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-width / 2, -height / 2);
+  ctx.translate(panX, panY);
+
+  // Draw links
+  ctx.lineWidth = 1;
+  for (const link of links) {
+    const src = nodes[link.source];
+    const tgt = nodes[link.target];
+    if (!src.visible || !tgt.visible) continue;
+    const highlighted = hoveredNode && (hoveredNode === src || hoveredNode === tgt);
+    ctx.strokeStyle = highlighted
+      ? (isDark ? 'rgba(212,165,116,0.5)' : 'rgba(139,94,60,0.4)')
+      : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
+    ctx.lineWidth = highlighted ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    ctx.lineTo(tgt.x, tgt.y);
+    ctx.stroke();
+  }
+
+  // Draw nodes
+  for (const node of nodes) {
+    if (!node.visible) continue;
+    const isHovered = node === hoveredNode;
+    const isConnected = hoveredNode && graphState.links.some(l =>
+      (nodes[l.source] === hoveredNode && nodes[l.target] === node) ||
+      (nodes[l.target] === hoveredNode && nodes[l.source] === node)
+    );
+    const dimmed = hoveredNode && !isHovered && !isConnected;
+
+    const color = getFolderColor(node.folder, graphState.nodeColorMap);
+    const alpha = dimmed ? 0.2 : 1;
+    const r = isHovered ? 9 : 6;
+
+    // Glow for hovered
+    if (isHovered) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12;
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    // Label — show when zoomed in enough or for connected nodes
+    const showLabel = isHovered || (graphState.zoom > 0.8 && (node.linkCount > 0 || nodes.length < 40));
+    if (showLabel) {
+      ctx.font = isHovered ? 'bold 12px -apple-system, sans-serif' : '10px -apple-system, sans-serif';
+      ctx.fillStyle = isDark ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.fillText(node.label, node.x, node.y + r + 14);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+function getGraphNodeAt(x, y) {
+  const { nodes, panX, panY, zoom, width, height } = graphState;
+  // Reverse the render transform: undo pan, undo zoom-from-center
+  const mx = (x - width / 2) / zoom + width / 2 - panX;
+  const my = (y - height / 2) / zoom + height / 2 - panY;
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (!n.visible) continue;
+    const dx = mx - n.x;
+    const dy = my - n.y;
+    if (dx * dx + dy * dy <= 100) return n; // 10px hit area
+  }
+  return null;
+}
+
+function graphScreenToWorld(sx, sy) {
+  const { panX, panY, zoom, width, height } = graphState;
+  return {
+    x: (sx - width / 2) / zoom + width / 2 - panX,
+    y: (sy - height / 2) / zoom + height / 2 - panY,
+  };
+}
+
+function onGraphMouseDown(e) {
+  const rect = graphState.canvas.getBoundingClientRect();
+  const node = getGraphNodeAt(e.clientX - rect.left, e.clientY - rect.top);
+  if (node) {
+    graphState.dragging = node;
+    graphState.dragOffset = graphScreenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    graphState.dragOffset.x -= node.x;
+    graphState.dragOffset.y -= node.y;
+    graphState.canvas.style.cursor = 'grabbing';
+  } else {
+    graphState.panStart = { x: e.clientX - graphState.panX, y: e.clientY - graphState.panY };
+  }
+}
+
+function onGraphMouseMove(e) {
+  const rect = graphState.canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (graphState.dragging) {
+    const world = graphScreenToWorld(mx, my);
+    graphState.dragging.x = world.x - graphState.dragOffset.x;
+    graphState.dragging.y = world.y - graphState.dragOffset.y;
+    graphState.dragging.vx = 0;
+    graphState.dragging.vy = 0;
+  } else if (graphState.panStart) {
+    graphState.panX = e.clientX - graphState.panStart.x;
+    graphState.panY = e.clientY - graphState.panStart.y;
+  } else {
+    const node = getGraphNodeAt(mx, my);
+    graphState.hoveredNode = node;
+    graphState.canvas.style.cursor = node ? 'pointer' : 'grab';
+
+    // Tooltip
+    const tooltip = document.getElementById('graphTooltip');
+    if (node) {
+      const linkNames = graphState.links
+        .filter(l => graphState.nodes[l.source] === node || graphState.nodes[l.target] === node)
+        .map(l => graphState.nodes[l.source] === node ? graphState.nodes[l.target].label : graphState.nodes[l.source].label)
+        .slice(0, 8);
+      tooltip.innerHTML = `<div class="tooltip-title">${escapeHtml(node.label)}</div>` +
+        `<div class="tooltip-folder">${escapeHtml(node.folder || '/')}</div>` +
+        (linkNames.length ? `<div class="tooltip-links">→ ${linkNames.map(escapeHtml).join(', ')}</div>` : '');
+      tooltip.style.left = (mx + 12) + 'px';
+      tooltip.style.top = (my - 10) + 'px';
+      tooltip.classList.remove('hidden');
+    } else {
+      tooltip.classList.add('hidden');
+    }
+  }
+}
+
+function onGraphMouseUp() {
+  if (graphState.dragging) {
+    graphState.dragging = null;
+    graphState.canvas.style.cursor = 'grab';
+  }
+  graphState.panStart = null;
+}
+
+function onGraphWheel(e) {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  graphState.zoom = Math.max(0.1, Math.min(5, graphState.zoom * delta));
+}
+
+function onGraphDblClick(e) {
+  const rect = graphState.canvas.getBoundingClientRect();
+  const node = getGraphNodeAt(e.clientX - rect.left, e.clientY - rect.top);
+  if (node) {
+    // Open the file in vault view
+    switchView('vault');
+    setTimeout(() => {
+      const fileObj = { path: node.path, name: node.label };
+      loadFile(fileObj);
+      expandTreePath(node.path);
+    }, 100);
+  }
+}
+
 // Dashboard functionality
 function loadDashboard() {
   loadDashboardTasks();
@@ -2288,6 +2723,7 @@ function switchView(view) {
   document.getElementById('chatView')?.classList.add('hidden');
   document.getElementById('vaultView')?.classList.add('hidden');
   document.getElementById('homeView')?.classList.add('hidden');
+  document.getElementById('graphView')?.classList.add('hidden');
 
   // Show selected view
   if (view === 'home') {
@@ -2345,6 +2781,14 @@ function switchView(view) {
     document.getElementById('sidebarVault')?.classList.remove('hidden');
 
     loadVault();
+  } else if (view === 'graph') {
+    document.getElementById('graphView')?.classList.remove('hidden');
+
+    // Update sidebar
+    document.getElementById('sidebarChat')?.classList.add('hidden');
+    document.getElementById('sidebarVault')?.classList.remove('hidden');
+
+    loadGraph();
   }
 }
 
@@ -2386,6 +2830,9 @@ socket.on('connect', () => {
   updateConnectionStatus('connected');
   isInitialLoad = true;
   loadClientInfo();
+
+  // Load dashboard content on initial connect if on home view
+  if (currentView === 'home') loadDashboard();
 
   // Preload vault file list for chat autocomplete
   if (vaultFiles.length === 0) {
@@ -3046,10 +3493,10 @@ function addMessage(content, role, timestamp) {
   if (files.length > 0) {
     const filesHtml = files.map(f => {
       const sizeStr = formatFileSize(f.size);
-      return `<div class="flex items-center gap-2 mt-2 p-2 bg-gray-100 rounded">
-        <i class="fas fa-file text-gray-500"></i>
-        <span class="text-sm">${escapeHtml(f.name)}</span>
-        <span class="text-xs text-gray-400">(${sizeStr})</span>
+      return `<div class="flex items-center gap-2 mt-2 p-2 rounded" style="background:var(--bg-secondary);">
+        <i class="fas fa-file" style="color:var(--text-secondary);"></i>
+        <span class="text-sm" style="color:var(--text-primary);">${escapeHtml(f.name)}</span>
+        <span class="text-xs" style="color:var(--text-secondary);">(${sizeStr})</span>
       </div>`;
     }).join('');
     html += `<div class="mt-2">${filesHtml}</div>`;
@@ -3623,6 +4070,202 @@ async function loadClientInfo() {
 // Vault functionality
 let currentFile = null;
 
+// Vault tree state
+let vaultSortMode = localStorage.getItem('ks_vaultSort') || 'name-asc';
+let vaultSelectedPaths = new Set();
+const SORT_MODES = ['name-asc', 'name-desc', 'modified-desc', 'type'];
+const SORT_LABELS = { 'name-asc': 'Name A-Z', 'name-desc': 'Name Z-A', 'modified-desc': 'Recent first', 'type': 'By type' };
+
+function getTreeState() {
+  try { return new Set(JSON.parse(localStorage.getItem('ks_vaultTreeState') || '[]')); }
+  catch { return new Set(); }
+}
+
+function saveTreeState(expandedSet) {
+  localStorage.setItem('ks_vaultTreeState', JSON.stringify([...expandedSet]));
+}
+
+function collapseAllFolders() {
+  localStorage.setItem('ks_vaultTreeState', '[]');
+  renderVaultTree();
+}
+
+function vaultRename(oldPath, type) {
+  return async () => {
+    const oldName = oldPath.split('/').pop().replace(/\.(md|markdown)$/, '');
+    const newName = await showPrompt('Rename', `New name for "${oldName}":`, oldName);
+    if (!newName || newName === oldName) return;
+    const dir = oldPath.includes('/') ? oldPath.split('/').slice(0, -1).join('/') + '/' : '';
+    const ext = type === 'folder' ? '' : (oldPath.match(/\.(md|markdown|txt)$/)?.[0] || '.md');
+    const newPath = dir + newName + ext;
+    try {
+      const res = await fetch(`/api/vault/move?token=${token}${asParam()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: oldPath, to: newPath })
+      });
+      if (!res.ok) { showToast('Rename failed', 'error'); return; }
+      if (currentFile && currentFile.path === oldPath) currentFile.path = newPath;
+      loadVault();
+      showToast('Renamed', 'success');
+    } catch { showToast('Rename failed', 'error'); }
+    hideTreeContextMenu();
+  };
+}
+
+function vaultDuplicate(filePath) {
+  return async () => {
+    const dir = filePath.includes('/') ? filePath.split('/').slice(0, -1).join('/') + '/' : '';
+    const ext = filePath.match(/\.(md|markdown|txt|json|csv)$/)?.[0] || '';
+    const base = filePath.split('/').pop().replace(ext, '');
+    const newPath = dir + base + ' copy' + ext;
+    try {
+      // Read source
+      const content = await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(filePath)}`).then(r => r.text());
+      await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(newPath)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+      loadVault();
+      showToast('Duplicated', 'success');
+    } catch { showToast('Duplicate failed', 'error'); }
+    hideTreeContextMenu();
+  };
+}
+
+function vaultCopyPath(vaultPath) {
+  return () => {
+    navigator.clipboard.writeText(vaultPath).then(() => showToast('Path copied', 'success'));
+    hideTreeContextMenu();
+  };
+}
+
+function vaultDeletePath(vaultPath, type) {
+  return async () => {
+    const label = type === 'folder' ? `folder "${vaultPath}" and all its contents` : `"${vaultPath}"`;
+    if (!(await showConfirm('Delete', `Delete ${label}?`, 'Delete'))) return;
+    try {
+      await fetch(`/api/vault/batch-delete?token=${token}${asParam()}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: [vaultPath] })
+      });
+      if (currentFile && currentFile.path === vaultPath) {
+        currentFile = null;
+        document.getElementById('vaultFileName').textContent = 'Select a file';
+        document.getElementById('vaultContent').innerHTML = '';
+        document.getElementById('vaultActions').style.display = 'none';
+      }
+      loadVault();
+      showToast('Deleted', 'success');
+    } catch { showToast('Delete failed', 'error'); }
+    hideTreeContextMenu();
+  };
+}
+
+function vaultNewNoteIn(folderPath) {
+  return async () => {
+    const name = await showPrompt('New Note', 'Note name:', 'Untitled');
+    if (!name) return;
+    const fileName = name.endsWith('.md') ? name : name + '.md';
+    const filePath = folderPath ? folderPath + '/' + fileName : fileName;
+    try {
+      await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(filePath)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: `# ${name.replace(/\.md$/, '')}\n` })
+      });
+      await loadVault(filePath);
+      showToast('Note created', 'success');
+    } catch { showToast('Create failed', 'error'); }
+    hideTreeContextMenu();
+  };
+}
+
+function vaultNewSubfolder(folderPath) {
+  return async () => {
+    const name = await showPrompt('New Folder', 'Folder name:');
+    if (!name) return;
+    const folder = folderPath ? folderPath + '/' + name : name;
+    try {
+      await fetch(`/api/vault/folder?token=${token}${asParam()}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: folder })
+      });
+      loadVault();
+      showToast('Folder created', 'success');
+    } catch { showToast('Create failed', 'error'); }
+    hideTreeContextMenu();
+  };
+}
+
+// Context menu
+function showTreeContextMenu(e, items) {
+  e.preventDefault();
+  e.stopPropagation();
+  const menu = document.getElementById('treeContextMenu');
+  menu.innerHTML = items.map(item => {
+    if (item === '---') return '<div class="tree-ctx-sep"></div>';
+    const cls = item.danger ? ' tree-ctx-item danger' : ' tree-ctx-item';
+    return `<div class="${cls}" data-action="${item.id}"><i class="fas ${item.icon}"></i><span>${item.label}</span></div>`;
+  }).join('');
+
+  // Bind clicks
+  menu.querySelectorAll('.tree-ctx-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const actionId = el.dataset.action;
+      const found = items.find(i => i && i.id === actionId);
+      if (found && found.action) found.action();
+    });
+  });
+
+  // Position
+  const x = Math.min(e.clientX, window.innerWidth - 200);
+  const y = Math.min(e.clientY, window.innerHeight - items.length * 36 - 20);
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  menu.classList.remove('hidden');
+
+  // Close on any interaction outside the menu (mousedown covers click + drag + text selection)
+  const close = (ev) => {
+    if (menu.contains(ev.target)) return;
+    hideTreeContextMenu();
+  };
+  // Use capture phase so it fires before stopPropagation in tree item handlers
+  document.addEventListener('mousedown', close, true);
+  document.addEventListener('contextmenu', close, true);
+  // Auto-cleanup when hidden
+  menu._cleanup = () => {
+    document.removeEventListener('mousedown', close, true);
+    document.removeEventListener('contextmenu', close, true);
+  };
+}
+
+function hideTreeContextMenu() {
+  const menu = document.getElementById('treeContextMenu');
+  if (menu) {
+    menu.classList.add('hidden');
+    if (menu._cleanup) { menu._cleanup(); menu._cleanup = null; }
+  }
+}
+
+// Multi-select
+function updateBatchBar() {
+  const bar = document.getElementById('vaultBatchBar');
+  const count = document.getElementById('vaultBatchCount');
+  if (!bar) return;
+  if (vaultSelectedPaths.size > 0) {
+    bar.classList.remove('hidden');
+    count.textContent = `${vaultSelectedPaths.size} selected`;
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+function clearVaultSelection() {
+  vaultSelectedPaths.clear();
+  document.querySelectorAll('.vault-item.selected').forEach(el => el.classList.remove('selected'));
+  updateBatchBar();
+}
+
 async function loadVault(autoOpenPath) {
   try {
     const res = await fetch(`/api/vault?token=${token}${asParam()}`);
@@ -3655,18 +4298,27 @@ async function loadVault(autoOpenPath) {
 
 function renderVaultTree() {
   vaultTree.innerHTML = '';
-  
+
   const tree = buildTree(vaultFiles);
-  renderTreeNode(tree, vaultTree, 0);
+  const expandedSet = getTreeState();
+  renderTreeNode(tree, vaultTree, 0, '', expandedSet);
+
+  // Re-apply selection highlights
+  if (vaultSelectedPaths.size > 0) {
+    vaultSelectedPaths.forEach(p => {
+      const el = vaultTree.querySelector(`[data-file-path="${CSS.escape(p)}"], [data-folder-path="${CSS.escape(p)}"]`);
+      if (el) el.classList.add('selected');
+    });
+  }
 }
 
 function buildTree(files, path = '') {
   const tree = {};
-  
+
   files.forEach(file => {
     const parts = file.path.split('/');
     let current = tree;
-    
+
     parts.forEach((part, index) => {
       if (!current[part]) {
         current[part] = index === parts.length - 1 ? { __file: file } : {};
@@ -3674,17 +4326,38 @@ function buildTree(files, path = '') {
       current = current[part];
     });
   });
-  
+
   return tree;
 }
 
-function renderTreeNode(node, container, level, parentPath = '') {
-  const sortedKeys = Object.keys(node).sort((a, b) => {
-    const aIsFile = node[a].__file;
-    const bIsFile = node[b].__file;
-    if (aIsFile === bIsFile) return a.localeCompare(b);
-    return aIsFile ? 1 : -1; // Folders first
+function sortTreeKeys(keys, node, mode) {
+  return keys.sort((a, b) => {
+    const aIsFile = !!node[a].__file;
+    const bIsFile = !!node[b].__file;
+    // Always group folders first
+    if (aIsFile !== bIsFile) return aIsFile ? 1 : -1;
+
+    switch (mode) {
+      case 'name-desc': return b.localeCompare(a);
+      case 'modified-desc': {
+        const aTime = aIsFile ? new Date(node[a].__file.modified || 0).getTime() : 0;
+        const bTime = bIsFile ? new Date(node[b].__file.modified || 0).getTime() : 0;
+        return bTime - aTime;
+      }
+      case 'type': {
+        if (!aIsFile || !bIsFile) return a.localeCompare(b);
+        const aExt = a.split('.').pop();
+        const bExt = b.split('.').pop();
+        if (aExt !== bExt) return aExt.localeCompare(bExt);
+        return a.localeCompare(b);
+      }
+      default: return a.localeCompare(b); // name-asc
+    }
   });
+}
+
+function renderTreeNode(node, container, level, parentPath, expandedSet) {
+  const sortedKeys = sortTreeKeys(Object.keys(node), node, vaultSortMode);
 
   sortedKeys.forEach(key => {
     const value = node[key];
@@ -3702,6 +4375,9 @@ function renderTreeNode(node, container, level, parentPath = '') {
       if (currentFile && currentFile.path === value.__file.path) {
         item.classList.add('active');
       }
+      if (vaultSelectedPaths.has(value.__file.path)) {
+        item.classList.add('selected');
+      }
 
       item.innerHTML = `
         <i class="fas ${icon} item-icon" style="color: var(--accent-light);"></i>
@@ -3710,7 +4386,53 @@ function renderTreeNode(node, container, level, parentPath = '') {
 
       item.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (e.ctrlKey || e.metaKey) {
+          // Toggle selection
+          const path = value.__file.path;
+          if (vaultSelectedPaths.has(path)) {
+            vaultSelectedPaths.delete(path);
+            item.classList.remove('selected');
+          } else {
+            vaultSelectedPaths.add(path);
+            item.classList.add('selected');
+          }
+          updateBatchBar();
+          return;
+        }
+        // Normal click clears selection and opens file
+        clearVaultSelection();
         loadFile(value.__file);
+      });
+
+      // Context menu
+      item.addEventListener('contextmenu', (e) => {
+        e.stopPropagation();
+        showTreeContextMenu(e, [
+          { id: 'open', icon: 'fa-external-link-alt', label: 'Open', action: () => { loadFile(value.__file); hideTreeContextMenu(); } },
+          '---',
+          { id: 'rename', icon: 'fa-pen', label: 'Rename', action: vaultRename(value.__file.path, 'file') },
+          { id: 'duplicate', icon: 'fa-copy', label: 'Duplicate', action: vaultDuplicate(value.__file.path) },
+          { id: 'move', icon: 'fa-folder-open', label: 'Move to...', action: async () => {
+            hideTreeContextMenu();
+            const folders = [...new Set(vaultFiles.map(f => f.path.includes('/') ? f.path.split('/').slice(0, -1).join('/') : '').filter(Boolean))].sort();
+            const dest = await showPrompt('Move File', `Move "${value.__file.path.split('/').pop()}" to folder.\nAvailable: ${folders.join(', ') || '(root)'}`, '');
+            if (dest === null) return;
+            const filename = value.__file.path.split('/').pop();
+            const toPath = dest.trim() ? dest.trim().replace(/\/$/, '') + '/' + filename : filename;
+            if (toPath === value.__file.path) return;
+            try {
+              await fetch(`/api/vault/move?token=${token}${asParam()}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ from: value.__file.path, to: toPath })
+              });
+              loadVault();
+              showToast('Moved', 'success');
+            } catch { showToast('Move failed', 'error'); }
+          }},
+          { id: 'copypath', icon: 'fa-link', label: 'Copy path', action: vaultCopyPath(value.__file.path) },
+          '---',
+          { id: 'delete', icon: 'fa-trash', label: 'Delete', action: vaultDeletePath(value.__file.path, 'file'), danger: true },
+        ]);
       });
 
       container.appendChild(item);
@@ -3722,44 +4444,70 @@ function renderTreeNode(node, container, level, parentPath = '') {
       item.className = 'vault-item folder';
       item.dataset.folderPath = folderPath;
 
-      const chevron = document.createElement('i');
-      chevron.className = 'fas fa-chevron-right chevron';
+      if (vaultSelectedPaths.has(folderPath)) {
+        item.classList.add('selected');
+      }
+
+      const isExpanded = expandedSet.has(folderPath);
 
       item.innerHTML = `
-        <i class="fas fa-chevron-right chevron"></i>
-        <i class="fas fa-folder item-icon" style="color: var(--accent-light);"></i>
+        <i class="fas fa-chevron-right chevron ${isExpanded ? 'open' : ''}"></i>
+        <i class="fas ${isExpanded ? 'fa-folder-open' : 'fa-folder'} item-icon" style="color: var(--accent-light);"></i>
         <span class="item-label" style="font-weight: 500;">${key}</span>
       `;
 
       const childContainer = document.createElement('div');
-      childContainer.className = 'folder-children';
-      // Auto-expand first level
-      if (level > 0) childContainer.classList.add('hidden');
-
-      const chevronEl = item.querySelector('.chevron');
-      if (level === 0) {
-        chevronEl.classList.add('open');
-        item.querySelector('.fa-folder').classList.replace('fa-folder', 'fa-folder-open');
-      }
+      childContainer.className = 'folder-children' + (isExpanded ? '' : ' hidden');
 
       item.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (e.ctrlKey || e.metaKey) {
+          // Toggle selection
+          if (vaultSelectedPaths.has(folderPath)) {
+            vaultSelectedPaths.delete(folderPath);
+            item.classList.remove('selected');
+          } else {
+            vaultSelectedPaths.add(folderPath);
+            item.classList.add('selected');
+          }
+          updateBatchBar();
+          return;
+        }
+        clearVaultSelection();
+
         const isOpen = !childContainer.classList.contains('hidden');
         childContainer.classList.toggle('hidden');
+        const chevronEl = item.querySelector('.chevron');
         chevronEl.classList.toggle('open');
         const folderIcon = item.querySelector('.item-icon');
         if (isOpen) {
           folderIcon.classList.replace('fa-folder-open', 'fa-folder');
+          expandedSet.delete(folderPath);
         } else {
           folderIcon.classList.replace('fa-folder', 'fa-folder-open');
+          expandedSet.add(folderPath);
         }
-        // Toggle active state on folder
+        saveTreeState(expandedSet);
         document.querySelectorAll('.vault-item.folder').forEach(f => f.classList.remove('active'));
         if (!isOpen) item.classList.add('active');
       });
 
+      // Context menu for folders
+      item.addEventListener('contextmenu', (e) => {
+        e.stopPropagation();
+        showTreeContextMenu(e, [
+          { id: 'new-note', icon: 'fa-plus', label: 'New note here', action: vaultNewNoteIn(folderPath) },
+          { id: 'new-folder', icon: 'fa-folder-plus', label: 'New subfolder', action: vaultNewSubfolder(folderPath) },
+          '---',
+          { id: 'rename', icon: 'fa-pen', label: 'Rename', action: vaultRename(folderPath, 'folder') },
+          { id: 'copypath', icon: 'fa-link', label: 'Copy path', action: vaultCopyPath(folderPath) },
+          '---',
+          { id: 'delete', icon: 'fa-trash', label: 'Delete folder', action: vaultDeletePath(folderPath, 'folder'), danger: true },
+        ]);
+      });
+
       wrapper.appendChild(item);
-      renderTreeNode(value, childContainer, level + 1, folderPath);
+      renderTreeNode(value, childContainer, level + 1, folderPath, expandedSet);
       wrapper.appendChild(childContainer);
       container.appendChild(wrapper);
     }
@@ -4005,22 +4753,17 @@ function buildMediaToolbar(info, actions) {
 function expandTreePath(filePath) {
   if (!filePath || !vaultTree || vaultTree.children.length === 0) return;
 
+  const expandedSet = getTreeState();
   const parts = filePath.split('/');
   // Expand each folder level in the path
   for (let i = 0; i < parts.length - 1; i++) {
     const folderPath = parts.slice(0, i + 1).join('/');
-    const folderItem = vaultTree.querySelector(`[data-folder-path="${CSS.escape(folderPath)}"]`);
-    if (folderItem) {
-      const childContainer = folderItem.parentElement.querySelector('.folder-children');
-      if (childContainer && childContainer.classList.contains('hidden')) {
-        childContainer.classList.remove('hidden');
-        const chevron = folderItem.querySelector('.chevron');
-        if (chevron) chevron.classList.add('open');
-        const folderIcon = folderItem.querySelector('.item-icon');
-        if (folderIcon) folderIcon.classList.replace('fa-folder', 'fa-folder-open');
-      }
-    }
+    expandedSet.add(folderPath);
   }
+  saveTreeState(expandedSet);
+
+  // Re-render with updated state
+  renderVaultTree();
 
   // Set active state on the file item
   document.querySelectorAll('.vault-item').forEach(el => el.classList.remove('active'));
@@ -4359,6 +5102,87 @@ async function onVaultSearchInput(e) {
 }
 
 vaultSearch.addEventListener('input', onVaultSearchInput);
+
+// Vault toolbar: New Note
+document.getElementById('newNoteBtn')?.addEventListener('click', async () => {
+  const name = await showPrompt('New Note', 'Note name:', 'Untitled');
+  if (!name) return;
+  const fileName = name.endsWith('.md') ? name : name + '.md';
+  try {
+    await fetch(`/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(fileName)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `# ${name.replace(/\.md$/, '')}\n` })
+    });
+    await loadVault(fileName);
+    showToast('Note created', 'success');
+  } catch { showToast('Create failed', 'error'); }
+});
+
+// Vault toolbar: New Folder
+document.getElementById('newFolderBtn')?.addEventListener('click', async () => {
+  const name = await showPrompt('New Folder', 'Folder name:');
+  if (!name) return;
+  try {
+    await fetch(`/api/vault/folder?token=${token}${asParam()}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: name })
+    });
+    loadVault();
+    showToast('Folder created', 'success');
+  } catch { showToast('Create failed', 'error'); }
+});
+
+// Vault toolbar: Sort
+document.getElementById('sortVaultBtn')?.addEventListener('click', () => {
+  const idx = SORT_MODES.indexOf(vaultSortMode);
+  vaultSortMode = SORT_MODES[(idx + 1) % SORT_MODES.length];
+  localStorage.setItem('ks_vaultSort', vaultSortMode);
+  renderVaultTree();
+  showToast(`Sort: ${SORT_LABELS[vaultSortMode]}`, 'info', 1500);
+});
+
+// Vault toolbar: Collapse All
+document.getElementById('collapseAllBtn')?.addEventListener('click', collapseAllFolders);
+
+// Batch operations
+document.getElementById('batchDeleteBtn')?.addEventListener('click', async () => {
+  if (vaultSelectedPaths.size === 0) return;
+  if (!(await showConfirm('Delete Selected', `Delete ${vaultSelectedPaths.size} items?`, 'Delete'))) return;
+  try {
+    await fetch(`/api/vault/batch-delete?token=${token}${asParam()}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: [...vaultSelectedPaths] })
+    });
+    if (currentFile && vaultSelectedPaths.has(currentFile.path)) {
+      currentFile = null;
+      document.getElementById('vaultFileName').textContent = 'Select a file';
+      document.getElementById('vaultContent').innerHTML = '';
+      document.getElementById('vaultActions').style.display = 'none';
+    }
+    vaultSelectedPaths.clear();
+    loadVault();
+    showToast('Deleted', 'success');
+  } catch { showToast('Delete failed', 'error'); }
+});
+
+document.getElementById('batchMoveBtn')?.addEventListener('click', async () => {
+  if (vaultSelectedPaths.size === 0) return;
+  const folders = [...new Set(vaultFiles.map(f => f.path.includes('/') ? f.path.split('/').slice(0, -1).join('/') : '').filter(Boolean))].sort();
+  const dest = await showPrompt('Move Selected', `Move ${vaultSelectedPaths.size} items to folder.\nAvailable: ${folders.join(', ') || '(root)'}`, '');
+  if (dest === null) return;
+  try {
+    await fetch(`/api/vault/batch-move?token=${token}${asParam()}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: [...vaultSelectedPaths], destination: dest.trim() })
+    });
+    vaultSelectedPaths.clear();
+    loadVault();
+    showToast('Moved', 'success');
+  } catch { showToast('Move failed', 'error'); }
+});
+
+document.getElementById('batchClearBtn')?.addEventListener('click', clearVaultSelection);
+
 // Upload
 uploadBtn.addEventListener('click', () => {
   const input = document.createElement('input');
@@ -4968,6 +5792,9 @@ function renderKanban(container) {
         <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}" data-lane-id="${lane.id}">
           ${renderCardContent(card)}
           <div class="card-actions">
+            <button class="kebab-card-btn" data-card-id="${card.id}" data-lane-id="${lane.id}" title="AI actions">
+              <i class="fas fa-ellipsis-vertical text-xs"></i>
+            </button>
             <button class="edit-card-btn" data-card-id="${card.id}" title="Edit">
               <i class="fas fa-pen text-xs"></i>
             </button>
@@ -5013,6 +5840,15 @@ function renderKanban(container) {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteCard(lane.id, btn.dataset.cardId);
+      });
+    });
+
+    // Kebab (AI actions) buttons
+    column.querySelectorAll('.kebab-card-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeCardContextMenu();
+        showCardContextMenu(btn.dataset.cardId, btn.dataset.laneId, btn);
       });
     });
 
@@ -5161,6 +5997,19 @@ socket.on('chat:history', (data) => {
     renderSessionList();
   }
 
+  // Skip rendering for background AI card actions
+  if (pendingBackgroundCount > 0 || (data.sessionKey && backgroundAIActions.size > 0)) {
+    let isBackground = false;
+    backgroundAIActions.forEach((state) => {
+      if (state.sessionKey === data.sessionKey) isBackground = true;
+    });
+    // If we have pending background sessions or this session is a known background one, skip
+    if (isBackground || pendingBackgroundCount > 0) {
+      if (pendingBackgroundCount > 0) pendingBackgroundCount--;
+      return;
+    }
+  }
+
   // On initial load while on home view, save session but don't render messages
   if (isInitialLoad) {
     isInitialLoad = false;
@@ -5282,6 +6131,277 @@ function clearToasts() {
   }
 }
 
+// Card Context Menu
+const CARD_PROMPT_TEMPLATES = {
+  'chat-about': 'I want to discuss this task/card:\n{context}\n\nPlease help me think through this.',
+  'breakdown': 'Break this task into actionable subtasks with checkboxes:\n{context}',
+  'draft': 'Draft content for this task:\n{context}',
+  'research': 'Research this topic thoroughly:\n{context}',
+  'ideas': 'Generate creative ideas and approaches for:\n{context}',
+};
+
+function buildCardContext(laneId, card) {
+  const lane = currentKanban.lanes.find(l => l.id === laneId);
+  const boardTitle = currentKanban?.title || 'Kanban';
+  const laneTitle = lane?.title || 'Unknown lane';
+  const body = card.body || '(no description)';
+
+  let context = `## ${card.title}\n${body}`;
+
+  // Add board + lane metadata
+  context += `\n\n---\nBoard: **${boardTitle}** · Lane: **${laneTitle}**`;
+
+  // Add sibling cards in the same lane for project context
+  if (lane && lane.cards.length > 1) {
+    const siblings = lane.cards
+      .filter(c => c.id !== card.id)
+      .slice(0, 8) // cap to avoid bloating
+      .map(c => `- ${c.title}`)
+      .join('\n');
+    if (siblings) {
+      context += `\nOther cards in this lane:\n${siblings}`;
+    }
+  }
+
+  // Add #file reference to the kanban board so the agent can read the full board if needed
+  const kanbanFile = currentKanbanFile || 'kanban.md';
+  context += `\n\n#kanban/${kanbanFile}`;
+
+  return context;
+}
+
+let cardContextMenuData = null; // { cardId, laneId, cardTitle, cardBody, context }
+
+function showCardContextMenu(cardId, laneId, anchorEl) {
+  const lane = currentKanban.lanes.find(l => l.id === laneId);
+  if (!lane) return;
+  const card = migrateCard(lane.cards.find(c => c.id === cardId));
+  if (!card) return;
+
+  const context = buildCardContext(laneId, card);
+  cardContextMenuData = { cardId, laneId, cardTitle: card.title, cardBody: card.body || '', context };
+
+  const menu = document.getElementById('cardContextMenu');
+  const items = [
+    { icon: 'fa-comments', label: 'Chat about this card', action: 'chat-about', cls: '' },
+    { icon: 'fa-list-check', label: 'Break down into subtasks', action: 'breakdown', cls: '' },
+    { icon: 'fa-file-lines', label: 'Draft content', action: 'draft', cls: '' },
+    { icon: 'fa-magnifying-glass', label: 'Research', action: 'research', cls: '' },
+    { icon: 'fa-lightbulb', label: 'Generate ideas', action: 'ideas', cls: '' },
+    { separator: true },
+    { icon: CARD_AI_ACTIONS.expand.icon, label: CARD_AI_ACTIONS.expand.label, action: 'ai-expand', cls: 'ai-action' },
+    { icon: CARD_AI_ACTIONS.subtasks.icon, label: CARD_AI_ACTIONS.subtasks.label, action: 'ai-subtasks', cls: 'ai-action' },
+    { icon: CARD_AI_ACTIONS.summarize.icon, label: CARD_AI_ACTIONS.summarize.label, action: 'ai-summarize', cls: 'ai-action' },
+  ];
+
+  menu.innerHTML = items.map(it => {
+    if (it.separator) return '<div class="card-context-separator"></div>';
+    return `<div class="card-context-item ${it.cls}" data-action="${it.action}">` +
+      `<i class="fas ${it.icon}"></i><span>${it.label}</span></div>`;
+  }).join('');
+
+  // Position below anchor
+  const rect = anchorEl.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.style.left = Math.min(rect.left, window.innerWidth - 230) + 'px';
+  menu.classList.remove('hidden');
+
+  // Wire item clicks
+  menu.querySelectorAll('.card-context-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const action = el.dataset.action;
+      const ctx = cardContextMenuData;
+      closeCardContextMenu();
+      if (action.startsWith('ai-')) {
+        const aiKey = action.slice(3);
+        executeCardAIAction(ctx.cardId, ctx.laneId, aiKey);
+      } else {
+        chatAboutCard(ctx.context, CARD_PROMPT_TEMPLATES[action]);
+      }
+    });
+  });
+}
+
+function closeCardContextMenu() {
+  const menu = document.getElementById('cardContextMenu');
+  if (menu) menu.classList.add('hidden');
+  cardContextMenuData = null;
+}
+
+// Close context menu on outside click or Escape
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('cardContextMenu');
+  if (menu && !menu.contains(e.target) && !e.target.closest('.kebab-card-btn') && !e.target.closest('#cardModalKebab')) {
+    closeCardContextMenu();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeCardContextMenu();
+});
+
+function chatAboutCard(context, promptTemplate) {
+  const message = promptTemplate.replace('{context}', context);
+
+  switchView('chat');
+
+  // Create new session, then send the card-context message
+  const onHistory = (data) => {
+    if (!data.sessionKey) return;
+    socket.off('chat:history', onHistory);
+
+    const messageId = Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+    addMessage({ text: message, files: [] }, 'user', new Date().toISOString());
+    socket.emit('chat:message', { message, messageId, tempFiles: [] });
+  };
+  socket.on('chat:history', onHistory);
+  socket.emit('sessions:new');
+}
+
+// AI In-Place Card Actions
+const CARD_AI_ACTIONS = {
+  expand: {
+    label: 'Expand card',
+    icon: 'fa-up-right-and-down-left-from-center',
+    prompt: 'Expand this card with more detail, examples, and context. Keep the same markdown format:\n{context}\n\nReturn ONLY the expanded body content in markdown (no title header).',
+  },
+  subtasks: {
+    label: 'Generate subtasks',
+    icon: 'fa-list-check',
+    prompt: 'Generate a detailed subtask checklist for this card. Use - [ ] syntax:\n{context}\n\nReturn ONLY the checklist in markdown.',
+  },
+  summarize: {
+    label: 'Summarize',
+    icon: 'fa-compress',
+    prompt: 'Summarize this card concisely while preserving key information:\n{context}\n\nReturn ONLY the summarized body content in markdown (no title header).',
+  },
+};
+
+let backgroundAIActions = new Map(); // cardId -> { sessionKey, originalBody, timeout, onMessage }
+let pendingBackgroundCount = 0; // tracks sessions:new in-flight for background AI
+
+function showToastWithAction(message, type, actionLabel, actionFn, duration = 8000) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  const icon = toastIcons[type] || toastIcons.info;
+
+  toast.innerHTML = `
+    <i class="fas ${icon} toast-icon"></i>
+    <span class="toast-message">${escapeHtml(message)}</span>
+    <button class="toast-action" style="background:none;border:none;color:var(--accent-primary);font-weight:600;cursor:pointer;font-size:12px;margin-left:8px;white-space:nowrap;">${escapeHtml(actionLabel)}</button>
+    <button class="toast-close" title="Dismiss"><i class="fas fa-times"></i></button>
+  `;
+
+  toast.querySelector('.toast-close').addEventListener('click', () => dismissToast(toast));
+  toast.querySelector('.toast-action').addEventListener('click', () => {
+    actionFn();
+    dismissToast(toast);
+  });
+
+  container.appendChild(toast);
+  if (duration > 0) setTimeout(() => dismissToast(toast), duration);
+  return toast;
+}
+
+function executeCardAIAction(cardId, laneId, actionKey) {
+  const lane = currentKanban.lanes.find(l => l.id === laneId);
+  if (!lane) return;
+  const card = migrateCard(lane.cards.find(c => c.id === cardId));
+  if (!card) return;
+
+  // Prevent duplicate actions on same card
+  if (backgroundAIActions.has(cardId)) {
+    showToast('AI is already working on this card', 'warning');
+    return;
+  }
+
+  const actionDef = CARD_AI_ACTIONS[actionKey];
+  const context = buildCardContext(laneId, card);
+  const prompt = actionDef.prompt.replace('{context}', context);
+  const originalBody = card.body;
+
+  // Show loading state on card
+  const cardEl = document.querySelector(`.kanban-card[data-card-id="${cardId}"]`);
+  if (cardEl) cardEl.classList.add('card-ai-loading');
+
+  closeCardContextMenu();
+
+  // Track state
+  const state = { sessionKey: null, originalBody, timeout: null, cardId, laneId, onMessage: null, onHistory: null };
+  backgroundAIActions.set(cardId, state);
+
+  // Timeout after 120s
+  state.timeout = setTimeout(() => {
+    cleanupAIAction(cardId);
+    showToast('AI action timed out', 'error');
+  }, 120000);
+
+  // Create background session
+  const savedActiveKey = activeSessionKey;
+
+  state.onHistory = (data) => {
+    if (!data.sessionKey) return;
+    socket.off('chat:history', state.onHistory);
+    state.onHistory = null;
+
+    state.sessionKey = data.sessionKey;
+
+    // Switch back to original session immediately
+    if (savedActiveKey && savedActiveKey !== data.sessionKey) {
+      socket.emit('sessions:switch', { sessionKey: savedActiveKey });
+    }
+
+    // Listen for assistant response
+    state.onMessage = (msgData) => {
+      if (msgData.sessionKey !== state.sessionKey) return;
+      if (msgData.message?.role !== 'assistant') return;
+
+      socket.off('chat:message', state.onMessage);
+      state.onMessage = null;
+
+      // Update card body with AI response
+      card.body = msgData.message.content || card.body;
+      saveKanban();
+      renderKanban();
+      cleanupAIAction(cardId);
+      showToastWithAction('AI updated card', 'success', 'Undo', () => {
+        card.body = originalBody;
+        saveKanban();
+        renderKanban();
+      });
+    };
+    socket.on('chat:message', state.onMessage);
+
+    // Send the prompt
+    socket.emit('chat:message', {
+      message: prompt,
+      messageId: Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9),
+      tempFiles: [],
+    });
+  };
+
+  pendingBackgroundCount++;
+  socket.on('chat:history', state.onHistory);
+  socket.emit('sessions:new');
+}
+
+function cleanupAIAction(cardId) {
+  const state = backgroundAIActions.get(cardId);
+  if (!state) return;
+  if (state.timeout) clearTimeout(state.timeout);
+  if (state.onMessage) socket.off('chat:message', state.onMessage);
+  if (state.onHistory) socket.off('chat:history', state.onHistory);
+
+  // Remove loading state from card
+  const cardEl = document.querySelector(`.kanban-card[data-card-id="${cardId}"]`);
+  if (cardEl) cardEl.classList.remove('card-ai-loading');
+
+  backgroundAIActions.delete(cardId);
+}
+
 // Kanban Modal State
 let editingCard = null;
 
@@ -5289,6 +6409,228 @@ let editingCard = null;
 document.getElementById('saveCard').addEventListener('click', saveCard);
 document.getElementById('closeModal').addEventListener('click', closeModal);
 document.getElementById('cancelCard').addEventListener('click', closeModal);
+
+// Card modal kebab button
+document.getElementById('cardModalKebab')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!editingCard) return;
+  const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
+  if (!lane) return;
+  const card = migrateCard(lane.cards.find(c => c.id === editingCard.cardId));
+  if (!card) return;
+  closeCardContextMenu();
+  showCardContextMenu(editingCard.cardId, editingCard.laneId, e.currentTarget);
+});
+
+// Card Chat Tab
+let cardSessionMap = {};
+try { cardSessionMap = JSON.parse(localStorage.getItem('ks_cardSessions') || '{}'); } catch { cardSessionMap = {}; }
+let cardChatLoading = false;
+
+function getCardStableKey(laneId, cardTitle) {
+  return `${currentKanbanFile}:${laneId}:${cardTitle}`;
+}
+
+function getCardSessionKey(laneId, cardTitle) {
+  return cardSessionMap[getCardStableKey(laneId, cardTitle)] || null;
+}
+
+function setCardSessionKey(laneId, cardTitle, sessionKey) {
+  const key = getCardStableKey(laneId, cardTitle);
+  cardSessionMap[key] = sessionKey;
+  localStorage.setItem('ks_cardSessions', JSON.stringify(cardSessionMap));
+}
+
+function showCardTab(tab) {
+  document.getElementById('cardTabEdit').classList.toggle('active', tab === 'edit');
+  document.getElementById('cardTabChat').classList.toggle('active', tab === 'chat');
+  document.getElementById('cardEditPane').classList.toggle('hidden', tab !== 'edit');
+  document.getElementById('cardChatPane').classList.toggle('hidden', tab !== 'chat');
+  document.getElementById('cardEditFooter').style.display = tab === 'edit' ? '' : 'none';
+  if (tab === 'chat') initCardChat();
+}
+
+// Tab click handlers
+document.getElementById('cardTabEdit')?.addEventListener('click', () => showCardTab('edit'));
+document.getElementById('cardTabChat')?.addEventListener('click', () => showCardTab('chat'));
+
+// Context toggle
+document.getElementById('cardChatContextToggle')?.addEventListener('click', () => {
+  const content = document.getElementById('cardChatContextContent');
+  const icon = document.querySelector('#cardChatContextToggle i');
+  if (content) {
+    content.classList.toggle('hidden');
+    if (icon) icon.style.transform = content.classList.contains('hidden') ? '' : 'rotate(180deg)';
+  }
+});
+
+// Send message handler
+document.getElementById('cardChatSend')?.addEventListener('click', sendCardChatMessage);
+document.getElementById('cardChatInput')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendCardChatMessage();
+  }
+});
+
+async function initCardChat() {
+  if (!editingCard) return;
+  const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
+  if (!lane) return;
+  const card = migrateCard(lane.cards.find(c => c.id === editingCard.cardId));
+  if (!card) return;
+
+  // Render card context
+  const contextContent = document.getElementById('cardChatContextContent');
+  if (contextContent) {
+    contextContent.innerHTML = `<strong>${escapeHtml(card.title)}</strong>` + (card.body ? `<br>${marked.parse(card.body)}` : '');
+  }
+
+  // Load existing session or show empty
+  const msgContainer = document.getElementById('cardChatMessages');
+  if (!msgContainer) return;
+
+  const sessionKey = getCardSessionKey(editingCard.laneId, card.title);
+  if (sessionKey) {
+    try {
+      const asQ = asParam();
+      const res = await fetch(`/api/chat/history?token=${token}${asQ}&sessionKey=${encodeURIComponent(sessionKey)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const msgs = data.messages || [];
+        if (msgs.length > 0) {
+          msgContainer.innerHTML = '';
+          msgs.forEach(msg => renderCardChatMessage(msgContainer, msg.content, msg.role));
+          msgContainer.scrollTop = msgContainer.scrollHeight;
+          return;
+        }
+      }
+    } catch { /* fall through to empty state */ }
+  }
+
+  // Empty state
+  msgContainer.innerHTML = '<div class="card-chat-empty"><i class="fas fa-robot" style="font-size:24px;opacity:0.3;display:block;margin-bottom:8px;"></i>Ask the AI about this card</div>';
+}
+
+function renderCardChatMessage(container, content, role) {
+  // Remove empty state
+  const empty = container.querySelector('.card-chat-empty');
+  if (empty) empty.remove();
+
+  const div = document.createElement('div');
+  div.className = `card-chat-msg ${role}`;
+
+  if (role === 'assistant') {
+    div.innerHTML = marked.parse(content || '');
+    // Add "Apply to card" button
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'apply-to-card-btn';
+    applyBtn.innerHTML = '<i class="fas fa-arrow-up"></i> Apply to card';
+    applyBtn.addEventListener('click', () => {
+      const editor = document.getElementById('cardEditor');
+      if (editor) editor.innerHTML = markdownToEditorHtml(content);
+      showCardTab('edit');
+      showToast('Content applied to card editor', 'success', 2000);
+    });
+    div.appendChild(applyBtn);
+  } else {
+    div.textContent = content;
+  }
+
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendCardChatMessage() {
+  const input = document.getElementById('cardChatInput');
+  if (!input || cardChatLoading) return;
+  const message = input.value.trim();
+  if (!message) return;
+  if (!editingCard) return;
+
+  const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
+  if (!lane) return;
+  const card = migrateCard(lane.cards.find(c => c.id === editingCard.cardId));
+  if (!card) return;
+
+  input.value = '';
+  cardChatLoading = true;
+
+  const msgContainer = document.getElementById('cardChatMessages');
+  if (!msgContainer) return;
+
+  renderCardChatMessage(msgContainer, message, 'user');
+
+  // Ensure we have a session
+  let sessionKey = getCardSessionKey(editingCard.laneId, card.title);
+
+  try {
+    if (!sessionKey) {
+      // Create a new session
+      const createRes = await fetch(`/api/chat/session?token=${token}${asParam()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: `Card: ${card.title}` }),
+      });
+      if (!createRes.ok) throw new Error('Failed to create session');
+      const createData = await createRes.json();
+      sessionKey = createData.sessionKey;
+      setCardSessionKey(editingCard.laneId, card.title, sessionKey);
+
+      // First message includes card context
+      const context = buildCardContext(editingCard.laneId, card);
+      const contextMessage = `I'm working on a kanban card:\n${context}\n\n---\n${message}`;
+
+      // Show typing indicator
+      const typingDiv = document.createElement('div');
+      typingDiv.className = 'card-chat-msg assistant';
+      typingDiv.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="color:var(--text-secondary);"></i>';
+      msgContainer.appendChild(typingDiv);
+      msgContainer.scrollTop = msgContainer.scrollHeight;
+
+      const sendRes = await fetch(`/api/chat/send?token=${token}${asParam()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionKey, message: contextMessage }),
+      });
+      if (!sendRes.ok) throw new Error('Failed to send message');
+      const sendData = await sendRes.json();
+
+      typingDiv.remove();
+      (sendData.messages || []).forEach(msg => {
+        renderCardChatMessage(msgContainer, msg.content, msg.role);
+      });
+    } else {
+      // Existing session — just send the message
+      const typingDiv = document.createElement('div');
+      typingDiv.className = 'card-chat-msg assistant';
+      typingDiv.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="color:var(--text-secondary);"></i>';
+      msgContainer.appendChild(typingDiv);
+      msgContainer.scrollTop = msgContainer.scrollHeight;
+
+      const sendRes = await fetch(`/api/chat/send?token=${token}${asParam()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionKey, message }),
+      });
+      if (!sendRes.ok) throw new Error('Failed to send message');
+      const sendData = await sendRes.json();
+
+      typingDiv.remove();
+      (sendData.messages || []).forEach(msg => {
+        renderCardChatMessage(msgContainer, msg.content, msg.role);
+      });
+    }
+  } catch (err) {
+    console.error('[card-chat] Error:', err);
+    showToast('Card chat error: ' + err.message, 'error');
+    // Remove typing indicator on error
+    const typing = msgContainer.querySelector('.fa-circle-notch');
+    if (typing) typing.closest('.card-chat-msg')?.remove();
+  } finally {
+    cardChatLoading = false;
+  }
+}
 
 // Close modal on overlay click
 document.getElementById('cardModal').addEventListener('click', (e) => {
@@ -5409,6 +6751,7 @@ function openCardModal(laneId, cardId) {
   document.getElementById('modalTitle').textContent = card.title || 'Card';
   document.getElementById('cardEditor').innerHTML = markdownToEditorHtml(card.body || '');
 
+  showCardTab('edit');
   document.getElementById('cardModal').classList.remove('hidden');
 }
 
@@ -5419,6 +6762,7 @@ function openNewCardModal(laneId) {
   document.getElementById('modalTitle').textContent = 'New Card';
   document.getElementById('cardEditor').innerHTML = '';
 
+  showCardTab('edit');
   document.getElementById('cardModal').classList.remove('hidden');
   document.getElementById('cardTitle').focus();
 }

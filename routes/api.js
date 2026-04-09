@@ -526,6 +526,224 @@ router.delete('/prompts', (req, res) => {
   }
 });
 
+// Vault graph data — nodes for each .md file, links from [[wiki-links]] and #tags
+router.get('/vault/graph', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const vaultPath = getVaultBase(clientSlug);
+  const textExts = ['.md', '.markdown', '.txt'];
+
+  try {
+    if (!fs.existsSync(vaultPath)) return res.json({ nodes: [], links: [] });
+
+    const nodes = [];
+    const links = [];
+    const nodeIndex = {}; // path -> index
+
+    // Collect all text files as nodes
+    function collectNodes(base, rel) {
+      const full = rel ? path.join(base, rel) : base;
+      if (!fs.existsSync(full)) return;
+      for (const item of fs.readdirSync(full)) {
+        const itemPath = path.join(full, item);
+        const itemRel = rel ? rel + '/' + item : item;
+        const stat = fs.statSync(itemPath);
+        if (stat.isDirectory()) {
+          collectNodes(base, itemRel);
+        } else {
+          const ext = path.extname(item).toLowerCase();
+          if (textExts.includes(ext)) {
+            const id = itemRel.replace(/\.(md|markdown|txt)$/, '');
+            const label = item.replace(/\.(md|markdown|txt)$/, '');
+            const folder = rel || '';
+            nodeIndex[id] = nodes.length;
+            nodeIndex[itemRel] = nodes.length;
+            nodes.push({ id, label, path: itemRel, folder });
+          }
+        }
+      }
+    }
+
+    collectNodes(vaultPath, '');
+
+    // Parse links from file content
+    function parseLinks(base, rel) {
+      const full = rel ? path.join(base, rel) : base;
+      if (!fs.existsSync(full)) return;
+      for (const item of fs.readdirSync(full)) {
+        const itemPath = path.join(full, item);
+        const itemRel = rel ? rel + '/' + item : item;
+        const stat = fs.statSync(itemPath);
+        if (stat.isDirectory()) { parseLinks(base, itemRel); continue; }
+
+        const ext = path.extname(item).toLowerCase();
+        if (!textExts.includes(ext)) continue;
+
+        const srcId = itemRel.replace(/\.(md|markdown|txt)$/, '');
+        const srcIdx = nodeIndex[srcId];
+        if (srcIdx === undefined) continue;
+
+        try {
+          const content = fs.readFileSync(itemPath, 'utf8');
+
+          // [[wiki-links]]
+          const wikiLinks = content.matchAll(/\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g);
+          for (const m of wikiLinks) {
+            let target = m[1].trim();
+            // Try to resolve target to a known node
+            let targetIdx = nodeIndex[target]
+              ?? nodeIndex[target + '.md']
+              ?? nodeIndex[target.replace(/\.(md|markdown|txt)$/, '')];
+            // Fuzzy: find node whose label or id ends with target name
+            if (targetIdx === undefined) {
+              const base = target.split('/').pop().replace(/\.(md|markdown|txt)$/, '');
+              for (let i = 0; i < nodes.length; i++) {
+                if (nodes[i].label === base || nodes[i].id.endsWith('/' + base)) {
+                  targetIdx = i;
+                  break;
+                }
+              }
+            }
+            if (targetIdx !== undefined && targetIdx !== srcIdx) {
+              links.push({ source: srcIdx, target: targetIdx });
+            }
+          }
+
+          // #tags create implicit links between files sharing the same tag
+          const tags = content.matchAll(/(?:^|\s)#([a-zA-Z][a-zA-Z0-9_-]*)/g);
+          const fileTags = new Set();
+          for (const m of tags) fileTags.add(m[1].toLowerCase());
+
+          // We'll create tag-cluster links after all files are parsed
+          if (fileTags.size > 0) {
+            itemRel; // store for second pass
+            if (!parseLinks._tagMap) parseLinks._tagMap = new Map();
+            parseLinks._tagMap.set(srcIdx, fileTags);
+          }
+        } catch {}
+      }
+    }
+
+    parseLinks(vaultPath, '');
+
+    // Create tag-based links (files sharing same tag get linked)
+    const tagMap = parseLinks._tagMap || new Map();
+    const existingLinks = new Set(links.map(l => `${Math.min(l.source, l.target)}-${Math.max(l.source, l.target)}`));
+
+    for (const [idxA, tagsA] of tagMap) {
+      for (const [idxB, tagsB] of tagMap) {
+        if (idxA >= idxB) continue;
+        const shared = [...tagsA].some(t => tagsB.has(t));
+        if (shared) {
+          const key = `${Math.min(idxA, idxB)}-${Math.max(idxA, idxB)}`;
+          if (!existingLinks.has(key)) {
+            existingLinks.add(key);
+            links.push({ source: idxA, target: idxB });
+          }
+        }
+      }
+    }
+
+    res.json({ nodes, links });
+  } catch (error) {
+    console.error('Error building graph:', error);
+    res.status(500).json({ error: 'Failed to build graph' });
+  }
+});
+
+// Create folder
+router.post('/vault/folder', (req, res) => {
+  const clientSlug = req.clientSlug;
+  const { path: folderPath } = req.body;
+  if (!folderPath) return res.status(400).json({ error: 'Folder path required' });
+
+  const vaultBase = getVaultBase(clientSlug);
+  const fullPath = safeResolvePath(vaultBase, folderPath);
+
+  if (!isInsideVault(fullPath, vaultBase)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    fs.mkdirSync(fullPath, { recursive: true });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error creating folder:', error);
+    res.status(500).json({ error: 'Failed to create folder' });
+  }
+});
+
+// Batch delete
+router.post('/vault/batch-delete', async (req, res) => {
+  const clientSlug = req.clientSlug;
+  const { paths } = req.body;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return res.status(400).json({ error: 'paths array required' });
+  }
+
+  const vaultBase = getVaultBase(clientSlug);
+  const deleted = [];
+  const errors = [];
+
+  for (const p of paths) {
+    const fullPath = safeResolvePath(vaultBase, p);
+    if (!isInsideVault(fullPath, vaultBase)) { errors.push({ path: p, error: 'Access denied' }); continue; }
+    try {
+      if (fs.existsSync(fullPath)) {
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(fullPath);
+        }
+        deleted.push(p);
+      }
+    } catch (e) {
+      errors.push({ path: p, error: e.message });
+    }
+  }
+
+  res.json({ deleted, errors });
+});
+
+// Batch move
+router.post('/vault/batch-move', async (req, res) => {
+  const clientSlug = req.clientSlug;
+  const { paths, destination } = req.body;
+  if (!Array.isArray(paths) || paths.length === 0 || !destination) {
+    return res.status(400).json({ error: 'paths array and destination required' });
+  }
+
+  const vaultBase = getVaultBase(clientSlug);
+  const destFull = safeResolvePath(vaultBase, destination);
+  if (!isInsideVault(destFull, vaultBase)) {
+    return res.status(403).json({ error: 'Destination access denied' });
+  }
+
+  try {
+    if (!fs.existsSync(destFull)) fs.mkdirSync(destFull, { recursive: true });
+  } catch (e) {
+    return res.status(500).json({ error: 'Cannot create destination folder' });
+  }
+
+  const moved = [];
+  const errors = [];
+
+  for (const p of paths) {
+    const srcFull = safeResolvePath(vaultBase, p);
+    if (!isInsideVault(srcFull, vaultBase)) { errors.push({ path: p, error: 'Access denied' }); continue; }
+    try {
+      const filename = path.basename(p);
+      const targetPath = path.join(destFull, filename);
+      fs.renameSync(srcFull, targetPath);
+      moved.push(p);
+    } catch (e) {
+      errors.push({ path: p, error: e.message });
+    }
+  }
+
+  res.json({ moved, errors });
+});
+
 // Helper functions
 function walkDirectory(basePath, relativePath, files) {
   const fullPath = path.join(basePath, relativePath);

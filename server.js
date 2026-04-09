@@ -330,6 +330,58 @@ app.post('/api/chat/upload', (req, res, next) => {
   });
 });
 
+// Card Chat REST endpoints (for card modal chat tab)
+app.post('/api/chat/session', async (req, res) => {
+  const token = req.query.token || req.cookies.auth_token;
+  const clientSlug = authManager.validateToken(token);
+  if (!clientSlug) return res.status(403).json({ error: 'Invalid token' });
+
+  try {
+    const sessionKey = await engine.sessions.createSession(clientSlug);
+    if (req.body.label && typeof req.body.label === 'string' && req.body.label.length <= 200) {
+      await engine.sessions.renameSession(sessionKey, req.body.label);
+    }
+    res.json({ sessionKey });
+  } catch (error) {
+    console.error('[card-chat] Error creating session:', error);
+    res.status(500).json({ error: 'Failed to create session' });
+  }
+});
+
+app.post('/api/chat/send', async (req, res) => {
+  const token = req.query.token || req.cookies.auth_token;
+  const clientSlug = authManager.validateToken(token);
+  if (!clientSlug) return res.status(403).json({ error: 'Invalid token' });
+
+  const { sessionKey, message } = req.body;
+  if (!sessionKey || !message) {
+    return res.status(400).json({ error: 'sessionKey and message required' });
+  }
+
+  req.setTimeout(30 * 60 * 1000); // 30 min timeout for long agent responses
+
+  try {
+    const historyBefore = await engine.chat.loadHistory(sessionKey, 50);
+    const msgCountBefore = historyBefore.length;
+
+    await engine.chat.sendMessage(sessionKey, message);
+
+    await engine.chat.pollForReply(sessionKey, msgCountBefore, {
+      pollIntervalMs: 2000,
+      maxPolls: 900,
+      idlePollsToStop: 3,
+    });
+
+    const historyAfter = await engine.chat.loadHistory(sessionKey, 50);
+    const newMessages = historyAfter.slice(msgCountBefore);
+
+    res.json({ messages: newMessages });
+  } catch (error) {
+    console.error('[card-chat] Error sending message:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
 // Token management (admin only - for Nexus to call)
 app.post('/admin/tokens/generate', (req, res) => {
   const { clientSlug } = req.body;

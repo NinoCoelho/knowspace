@@ -1957,6 +1957,140 @@
       background: var(--bg-secondary);
     }
 
+    /* Card Context Menu */
+    #cardContextMenu {
+      position: fixed;
+      z-index: 3000;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      overflow: hidden;
+      min-width: 210px;
+      animation: chat-plus-in 0.15s ease-out;
+    }
+
+    .card-context-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px;
+      cursor: pointer;
+      transition: background 0.12s;
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    .card-context-item:hover {
+      background: var(--bg-secondary);
+    }
+
+    .card-context-item i {
+      width: 16px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .card-context-separator {
+      height: 1px;
+      background: var(--border-light);
+      margin: 4px 0;
+    }
+
+    .card-context-item.ai-action i {
+      color: var(--accent-primary);
+    }
+
+    /* Card AI Loading State */
+    .kanban-card.card-ai-loading {
+      position: relative;
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .kanban-card.card-ai-loading::after {
+      content: 'AI working...';
+      position: absolute;
+      bottom: 8px;
+      right: 12px;
+      font-size: 11px;
+      color: var(--accent-primary);
+      animation: pulse-badge 1.5s ease-in-out infinite;
+    }
+
+    /* Toast Action Button */
+    .toast-action:hover {
+      text-decoration: underline;
+    }
+
+    /* Card Modal Tabs */
+    .card-modal-tab {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+
+    .card-modal-tab.active {
+      background: var(--accent-primary);
+      color: white;
+    }
+
+    .card-modal-tab:hover:not(.active) {
+      background: var(--bg-secondary);
+    }
+
+    /* Card Chat Messages */
+    .card-chat-msg {
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 90%;
+    }
+
+    .card-chat-msg.user {
+      background: var(--accent-primary);
+      color: white;
+      margin-left: auto;
+    }
+
+    .card-chat-msg.assistant {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      margin-right: auto;
+    }
+
+    .card-chat-msg .apply-to-card-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: none;
+      background: var(--accent-primary);
+      color: white;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .card-chat-msg .apply-to-card-btn:hover {
+      opacity: 0.85;
+    }
+
+    .card-chat-empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
     @keyframes chat-plus-in {
       from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
@@ -2377,6 +2511,43 @@
       width: 100%;
       height: auto;
     }
+
+    /* Graph View */
+    #graphCanvas:active { cursor: grabbing; }
+    #graphTooltip .tooltip-title { font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+    #graphTooltip .tooltip-folder { color: var(--text-secondary); font-size: 11px; }
+    #graphTooltip .tooltip-links { color: var(--accent-primary); font-size: 11px; margin-top: 2px; }
+
+    /* Vault Toolbar */
+    .vault-toolbar-btn {
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-light); background: var(--bg-secondary);
+      border-radius: 6px; cursor: pointer; color: var(--text-secondary);
+      font-size: 12px; transition: all 0.15s;
+    }
+    .vault-toolbar-btn:hover {
+      background: var(--accent-primary); color: white; border-color: var(--accent-primary);
+    }
+
+    /* Vault Tree Context Menu */
+    .tree-ctx-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 12px; border-radius: 6px; cursor: pointer;
+      color: var(--text-primary); transition: background 0.1s;
+    }
+    .tree-ctx-item:hover { background: var(--bg-secondary); }
+    .tree-ctx-item i { width: 14px; text-align: center; color: var(--text-secondary); font-size: 12px; }
+    .tree-ctx-item.danger { color: #dc2626; }
+    .tree-ctx-item.danger i { color: #dc2626; }
+    .tree-ctx-sep { height: 1px; background: var(--border-light); margin: 4px 8px; }
+
+    /* Vault Multi-select */
+    .vault-item.selected {
+      background: rgba(139,94,60,0.15) !important;
+      border-left: 3px solid var(--accent-primary);
+      padding-left: 7px;
+    }
   </style>
 </head>
 <body class="h-screen flex">
@@ -2391,6 +2562,7 @@
     <div class="sidebar-collapsed-icons">
       <button data-view="chat" title="Chat"><i class="fas fa-comment"></i></button>
       <button data-view="vault" title="Vault"><i class="fas fa-folder"></i></button>
+      <button data-view="graph" title="Graph"><i class="fas fa-project-diagram"></i></button>
     </div>
 
     <!-- Full sidebar content -->
@@ -2413,6 +2585,9 @@
       </a>
       <a href="#" class="nav-item flex-1 flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="vault">
         <i class="fas fa-folder mr-1.5"></i>Vault
+      </a>
+      <a href="#" class="nav-item flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium" data-view="graph" title="Graph View">
+        <i class="fas fa-project-diagram"></i>
       </a>
     </nav>
 
@@ -2437,13 +2612,25 @@
     <div id="sidebarVault" class="flex-1 flex flex-col min-h-0 hidden">
       <div class="px-3 pb-2 flex-shrink-0">
         <input type="text" id="vaultSearch"
-               class="w-full px-3 py-2 rounded-lg border-0 text-sm"
+               class="w-full px-3 py-2 rounded-lg border-0 text-sm mb-2"
                style="background: var(--bg-primary);"
                placeholder="Search files or #tags...">
-        <button id="uploadBtn" class="mt-2 w-full px-3 py-1.5 rounded-lg text-white font-medium text-xs"
-                style="background: var(--accent-primary);">
-          <i class="fas fa-upload mr-1"></i>Upload
-        </button>
+        <div class="flex items-center gap-1">
+          <button id="newNoteBtn" class="vault-toolbar-btn" title="New note"><i class="fas fa-plus"></i></button>
+          <button id="newFolderBtn" class="vault-toolbar-btn" title="New folder"><i class="fas fa-folder-plus"></i></button>
+          <button id="sortVaultBtn" class="vault-toolbar-btn" title="Sort order"><i class="fas fa-sort-amount-down"></i></button>
+          <button id="collapseAllBtn" class="vault-toolbar-btn" title="Collapse all"><i class="fas fa-compress-alt"></i></button>
+          <div class="flex-1"></div>
+          <button id="uploadBtn" class="vault-toolbar-btn" title="Upload"><i class="fas fa-upload"></i></button>
+        </div>
+      </div>
+      <!-- Batch action bar (shown when items are selected) -->
+      <div id="vaultBatchBar" class="hidden px-3 py-2 flex items-center gap-2 flex-shrink-0" style="background: rgba(139,94,60,0.1); border-bottom: 1px solid var(--border-light);">
+        <span id="vaultBatchCount" class="text-xs font-medium" style="color: var(--accent-primary);">0 selected</span>
+        <div class="flex-1"></div>
+        <button id="batchMoveBtn" class="text-xs px-2 py-1 rounded" style="background: var(--bg-secondary); border: 1px solid var(--border-light); cursor: pointer; color: var(--text-primary);"><i class="fas fa-folder-open mr-1"></i>Move</button>
+        <button id="batchDeleteBtn" class="text-xs px-2 py-1 rounded" style="background: rgba(220,38,38,0.1); border: 1px solid rgba(220,38,38,0.2); cursor: pointer; color: #dc2626;"><i class="fas fa-trash mr-1"></i>Delete</button>
+        <button id="batchClearBtn" class="text-xs px-2 py-1 rounded" style="background: var(--bg-secondary); border: 1px solid var(--border-light); cursor: pointer; color: var(--text-secondary);"><i class="fas fa-times"></i></button>
       </div>
       <div id="vaultTree" class="flex-1 overflow-y-auto px-2 pb-2 min-h-0"></div>
     </div>
@@ -2743,19 +2930,61 @@
     <div id="kanbanView" class="flex-1 hidden m-6 min-h-0 overflow-hidden">
       <div class="flex h-full gap-4 overflow-x-auto pb-4 items-stretch" id="kanbanBoard"></div>
     </div>
+
+    <!-- Graph View -->
+    <div id="graphView" class="flex-1 hidden m-6 min-h-0">
+      <div class="h-full rounded-2xl overflow-hidden flex flex-col" style="background: var(--bg-chat);">
+        <div class="p-4 border-b flex-shrink-0 flex items-center justify-between" style="border-color: var(--border-light);">
+          <div class="flex items-center gap-3">
+            <h2 class="font-semibold" style="color: var(--text-primary);">Vault Graph</h2>
+            <span id="graphNodeCount" class="text-xs" style="color: var(--text-secondary);"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="graphFilter" placeholder="Filter nodes..." class="px-3 py-1.5 rounded-lg border-0 text-xs" style="background: var(--bg-secondary); color: var(--text-primary); width: 180px;" autocomplete="off">
+            <button id="graphHideOrphansBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" title="Toggle orphan nodes">
+              <i class="fas fa-unlink"></i>
+            </button>
+            <button id="graphZoomOutBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" title="Zoom out">
+              <i class="fas fa-minus"></i>
+            </button>
+            <button id="graphZoomInBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" title="Zoom in">
+              <i class="fas fa-plus"></i>
+            </button>
+            <button id="graphFitBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" title="Fit to window">
+              <i class="fas fa-expand"></i>
+            </button>
+            <button id="graphResetBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium" style="background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-primary); cursor: pointer;" title="Reset layout">
+              <i class="fas fa-redo"></i>
+            </button>
+          </div>
+        </div>
+        <div class="flex-1 relative min-h-0">
+          <canvas id="graphCanvas" style="width:100%;height:100%;cursor:grab;"></canvas>
+          <div id="graphTooltip" class="hidden" style="position:absolute;pointer-events:none;background:var(--bg-chat);border:1px solid var(--border-light);border-radius:8px;padding:8px 12px;font-size:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);max-width:250px;z-index:10;"></div>
+        </div>
+      </div>
+    </div>
   </main>
 
   <!-- Card Editor Modal -->
   <div id="cardModal" class="modal-overlay hidden">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 640px; max-height: 80vh; display: flex; flex-direction: column;">
       <div class="modal-header">
-        <h3 id="modalTitle">Card</h3>
+        <div class="flex items-center gap-1">
+          <button id="cardTabEdit" class="card-modal-tab active">Edit</button>
+          <button id="cardTabChat" class="card-modal-tab">Chat</button>
+        </div>
+        <h3 id="modalTitle" style="flex:1; text-align:center; font-size:15px;">Card</h3>
+        <button id="cardModalKebab" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:14px;margin-right:4px;" title="AI actions">
+          <i class="fas fa-ellipsis-vertical"></i>
+        </button>
         <button id="closeModal" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
           <i class="fas fa-times"></i>
         </button>
       </div>
 
-      <div class="modal-body">
+      <!-- Edit Tab -->
+      <div id="cardEditPane" class="modal-body" style="flex:1; overflow-y:auto;">
         <div class="mb-4">
           <input type="text" id="cardTitle" class="w-full px-3 py-2 rounded-lg border"
                  placeholder="Card title"
@@ -2771,7 +3000,29 @@
         <div id="cardEditor" class="wysiwyg-editor" contenteditable="true"></div>
       </div>
 
-      <div class="modal-footer">
+      <!-- Chat Tab -->
+      <div id="cardChatPane" class="hidden" style="flex:1; display:flex; flex-direction:column; overflow:hidden; min-height:300px;">
+        <!-- Collapsible card context -->
+        <div id="cardChatContext" style="border-bottom:1px solid var(--border-light); padding:8px 12px;">
+          <button id="cardChatContextToggle" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-secondary);width:100%;padding:2px 0;">
+            <i class="fas fa-chevron-down" style="font-size:10px;transition:transform 0.15s;"></i>
+            <span>Card Context</span>
+          </button>
+          <div id="cardChatContextContent" class="hidden" style="margin-top:8px;padding:8px;border-radius:8px;font-size:13px;max-height:120px;overflow-y:auto;background:var(--bg-secondary);line-height:1.5;color:var(--text-secondary);"></div>
+        </div>
+        <!-- Messages -->
+        <div id="cardChatMessages" style="flex:1; overflow-y:auto; padding:12px;"></div>
+        <!-- Input -->
+        <div style="display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--border-light);">
+          <input type="text" id="cardChatInput" class="flex-1 px-3 py-2 rounded-lg border-0 text-sm" style="background:var(--bg-secondary);" placeholder="Ask about this card..." autocomplete="off">
+          <button id="cardChatSend" style="background:var(--accent-primary);color:white;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;">
+            <i class="fas fa-paper-plane"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Footer: only visible on Edit tab -->
+      <div id="cardEditFooter" class="modal-footer">
         <button id="cancelCard" class="px-4 py-2 rounded-lg text-sm font-medium" style="background: var(--bg-secondary); border: none; cursor: pointer;">
           Cancel
         </button>
@@ -3045,7 +3296,13 @@
     </div>
   </div>
 
+  <!-- Tree Context Menu -->
+  <div id="treeContextMenu" class="hidden" style="position:fixed;z-index:5000;min-width:180px;background:var(--bg-chat);border:1px solid var(--border-light);border-radius:10px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.15);font-size:13px;"></div>
+
   <!-- Toast Container -->
+  <!-- Card Context Menu (shared, positioned dynamically) -->
+  <div id="cardContextMenu" class="hidden" style="background: var(--bg-chat); border: 1px solid var(--border-light);"></div>
+
   <div id="toastContainer" class="toast-container"></div>
 
   <script src="/js/app.js"></script>
