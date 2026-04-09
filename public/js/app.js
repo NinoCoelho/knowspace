@@ -2796,6 +2796,100 @@ function buildSmartFileLink(filePath, displayText) {
   return linkHtml;
 }
 
+// Async: refresh vault file list and re-render smart links in a message
+// This picks up files the agent just created (e.g. generated images, saved docs)
+async function refreshVaultAndRelink(msgDiv) {
+  try {
+    const res = await fetch(`/api/vault?token=${token}${asParam()}`);
+    const data = await res.json();
+    const freshFiles = data.files || [];
+
+    // Update global vaultFiles
+    vaultFiles = freshFiles.filter(f => {
+      const ext = f.path.split('.').pop().toLowerCase();
+      return ['md', 'markdown', 'txt', 'json', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
+    });
+
+    // Check if any smart-file-link.missing links can now be resolved
+    let changed = false;
+    msgDiv.querySelectorAll('.smart-file-link.missing').forEach(link => {
+      const path = link.dataset.vaultPath;
+      if (!path) return;
+      const found = vaultFiles.find(f => f.path === path || f.path.endsWith('/' + path));
+      if (found) {
+        // Upgrade from missing to active link
+        link.classList.remove('missing');
+        link.classList.add('exists');
+        link.removeAttribute('title');
+        link.dataset.vaultPath = found.path;
+        link.style.cursor = 'pointer';
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openVaultPreview(found.path);
+        });
+        changed = true;
+      }
+    });
+
+    // Re-parse the entire message if any links were missing (images might now exist)
+    const hadMissingLinks = msgDiv.querySelector('.smart-file-link.missing');
+    if (hadMissingLinks || !changed) {
+      // Get the raw text and re-parse
+      const rawText = msgDiv.querySelector('.message-text-hidden')?.textContent;
+      if (!rawText) return;
+
+      const newHtml = parseVaultLinks(typeof marked !== 'undefined' ? marked.parse(rawText) : escapeHtml(rawText));
+
+      // Only update if links changed
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = newHtml;
+      const newLinks = tempDiv.querySelectorAll('.smart-file-link:not(.missing)').length;
+      const oldLinks = msgDiv.querySelectorAll('.smart-file-link:not(.missing)').length;
+
+      if (newLinks > oldLinks) {
+        // Re-render the message content
+        const proseEl = msgDiv.querySelector('.prose, #vaultProse');
+        if (proseEl) {
+          proseEl.innerHTML = newHtml;
+          applyMarkdownEnhancements(proseEl);
+        }
+      }
+    }
+
+    // Refresh vault tree sidebar if it's visible
+    if (!document.getElementById('sidebarVault')?.classList.contains('hidden')) {
+      renderVaultTree();
+    }
+
+    // Wire up any new smart file links and image previews
+    msgDiv.querySelectorAll('.smart-file-link[data-vault-path]').forEach(link => {
+      if (!link.dataset.wired) {
+        link.dataset.wired = 'true';
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openVaultPreview(link.dataset.vaultPath);
+        });
+      }
+    });
+
+    msgDiv.querySelectorAll('.inline-image-preview').forEach(preview => {
+      if (!preview.dataset.wired) {
+        preview.dataset.wired = 'true';
+        preview.addEventListener('click', () => {
+          const path = preview.dataset.vaultPath;
+          const imgUrl = `/api/vault/file?token=${token}${asParam()}&path=${encodeURIComponent(path)}`;
+          openLightbox(imgUrl, path.split('/').pop());
+        });
+      }
+    });
+
+  } catch (e) {
+    // Silent fail — links will work with stale data
+  }
+}
+
 function addMessage(content, role, timestamp) {
   // Remove typing indicator if present
   showTypingIndicator(false);
@@ -3052,6 +3146,12 @@ function addMessage(content, role, timestamp) {
   renderedMessageCount++;
   messagesDiv.appendChild(msgDiv);
   messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+  // For assistant messages, async-refresh vault files and re-render smart links
+  // This picks up files the agent just created (e.g. generated images)
+  if (role === 'assistant') {
+    refreshVaultAndRelink(msgDiv);
+  }
 }
 
 sendButton.addEventListener('click', sendMessage);
