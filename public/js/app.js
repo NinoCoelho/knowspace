@@ -2939,7 +2939,7 @@ socket.on('chat:message', (data) => {
   // Clear typing timeout since we got a response
   clearTimeout(typingTimeout);
   typingTimeout = null;
-  addMessage(data.content, data.role, data.timestamp);
+  addMessage(data.content, data.role, data.timestamp, data.subagent);
 });
 
 socket.on('typing', (data) => {
@@ -3340,17 +3340,14 @@ function parseVaultLinks(html) {
   html = html.replace(/(?<![="\/\w])([\w][\w\/.-]+\.(?:png|jpe?g|gif|webp|svg|md|markdown|txt|pdf|mp4|webm|mov|mp3|wav|json|csv))(?![^<]*>)(?![\w\/])/gi, (match, filePath) => {
     // Skip if it's already part of an HTML attribute or inside a tag
     if (filePath.startsWith('http') || filePath.includes('://')) return match;
-    // Only match if file exists in vault
     const found = vaultFiles.find(f => f.path === filePath || f.path.endsWith('/' + filePath));
-    if (!found) return match;
-    return buildSmartFileLink(found.path);
+    return buildSmartFileLink(found ? found.path : filePath);
   });
 
   // 3. Parse `code-wrapped paths`
   html = html.replace(/<code>([\w\/.-]+\.(?:png|jpe?g|gif|webp|svg|md|markdown|txt|pdf|mp4|webm|mov|mp3|wav|json|csv))<\/code>/gi, (match, filePath) => {
     const found = vaultFiles.find(f => f.path === filePath || f.path.endsWith('/' + filePath));
-    if (!found) return match;
-    return `<code>${buildSmartFileLink(found.path, filePath.split('/').pop())}</code>`;
+    return `<code>${buildSmartFileLink(found ? found.path : filePath, filePath.split('/').pop())}</code>`;
   });
 
   return html;
@@ -3380,7 +3377,7 @@ function buildSmartFileLink(filePath, displayText) {
       linkHtml += `<div class="inline-image-preview" data-vault-path="${escapeHtml(resolvedPath)}"><img src="${imgUrl}" alt="${escapeHtml(name)}" loading="lazy"></div>`;
     }
   } else {
-    linkHtml = `<span class="smart-file-link missing" title="File not found in vault">`;
+    linkHtml = `<span class="smart-file-link missing" data-vault-path="${escapeHtml(resolvedPath)}" title="File not yet in vault — click to try opening">`;
     linkHtml += `<i class="fas ${icon}"></i>`;
     linkHtml += `<span>${escapeHtml(name)}</span>`;
     if (folder) linkHtml += `<span class="file-path">${escapeHtml(folder)}</span>`;
@@ -3426,13 +3423,9 @@ async function refreshVaultAndRelink(msgDiv) {
       }
     });
 
-    // Re-parse the entire message if any links were missing (images might now exist)
-    const hadMissingLinks = msgDiv.querySelector('.smart-file-link.missing');
-    if (hadMissingLinks || !changed) {
-      // Get the raw text and re-parse
-      const rawText = msgDiv.querySelector('.message-text-hidden')?.textContent;
-      if (!rawText) return;
-
+    // Re-parse the entire message if vault files changed (new files may now be linkable)
+    const rawText = msgDiv.querySelector('.message-text-hidden')?.textContent;
+    if (rawText) {
       const newHtml = parseVaultLinks(typeof marked !== 'undefined' ? marked.parse(rawText) : escapeHtml(rawText));
 
       // Only update if links changed
@@ -3442,12 +3435,23 @@ async function refreshVaultAndRelink(msgDiv) {
       const oldLinks = msgDiv.querySelectorAll('.smart-file-link:not(.missing)').length;
 
       if (newLinks > oldLinks) {
-        // Re-render the message content
-        const proseEl = msgDiv.querySelector('.prose, #vaultProse');
-        if (proseEl) {
-          proseEl.innerHTML = newHtml;
-          applyMarkdownEnhancements(proseEl);
-        }
+        // Re-render message body (everything except actions, meta, and hidden text)
+        const hiddenSpan = msgDiv.querySelector('.message-text-hidden');
+        const actions = msgDiv.querySelector('.msg-actions');
+        const meta = msgDiv.querySelector('.msg-meta');
+        const reactions = msgDiv.querySelector('.msg-reactions');
+
+        // Rebuild content
+        const body = document.createElement('div');
+        body.innerHTML = `<span class="message-text-hidden" style="display:none">${escapeHtml(rawText)}</span>` + newHtml;
+        if (actions) body.appendChild(actions);
+        if (meta) body.appendChild(meta);
+        if (reactions) body.appendChild(reactions);
+
+        msgDiv.innerHTML = '';
+        while (body.firstChild) msgDiv.appendChild(body.firstChild);
+
+        applyMarkdownEnhancements(msgDiv);
       }
     }
 
@@ -3484,11 +3488,44 @@ async function refreshVaultAndRelink(msgDiv) {
   }
 }
 
-function addMessage(content, role, timestamp) {
+function addMessage(content, role, timestamp, subagent) {
   // Remove typing indicator if present
   showTypingIndicator(false);
 
   const text = typeof content === 'string' ? content : (content.text || '');
+
+  // Subagent result — render as expandable card with formatted content
+  if (subagent) {
+    const isOk = /complet|success|done/i.test(subagent.status || '');
+    const statusClass = isOk ? 'status-ok' : 'status-err';
+    const icon = isOk ? '✓' : '✕';
+    const el = document.createElement('div');
+    el.className = 'subagent-result-card';
+
+    const resultHtml = typeof marked !== 'undefined' ? marked.parse(text) : escapeHtml(text);
+
+    el.innerHTML = `
+      <div class="subagent-result-header">
+        <span class="subagent-result-toggle"><i class="fas fa-chevron-right"></i></span>
+        <span class="${statusClass}">${icon}</span>
+        <span class="subagent-result-task">${escapeHtml(subagent.task || 'Subagent')}</span>
+        ${subagent.status ? `<span class="subagent-result-status">${escapeHtml(subagent.status)}</span>` : ''}
+      </div>
+      <div class="subagent-result-body" style="display:none">${resultHtml}</div>`;
+
+    const header = el.querySelector('.subagent-result-header');
+    const body = el.querySelector('.subagent-result-body');
+    header.addEventListener('click', () => {
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      header.querySelector('.subagent-result-toggle i').className = open ? 'fas fa-chevron-right' : 'fas fa-chevron-down';
+      if (!open) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    });
+
+    messagesDiv.appendChild(el);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    return;
+  }
 
   // OpenClaw runtime context messages — render as a compact separator instead
   if (role === 'assistant' && text.startsWith('OpenClaw runtime context (internal):')) {
@@ -3554,6 +3591,11 @@ function addMessage(content, role, timestamp) {
   // Parse vault file references in assistant messages into smart links
   if (role === 'assistant' && approvals.length === 0) {
     html = parseVaultLinks(html);
+  }
+
+  // Store raw text for re-rendering when vault files refresh
+  if (role === 'assistant' && text) {
+    html = `<span class="message-text-hidden" style="display:none">${escapeHtml(text)}</span>` + html;
   }
 
   // Add file info for user messages
@@ -6103,7 +6145,7 @@ socket.on('chat:history', (data) => {
     data.messages.forEach(msg => {
       // Hide user /approve commands — the approval card shows the decision
       if (msg.role === 'user' && /^\/?approve\s+[a-f0-9]+\s/i.test(msg.content.trim())) return;
-      addMessage(msg.content, msg.role, msg.timestamp);
+      addMessage(msg.content, msg.role, msg.timestamp, msg.subagent);
     });
   }
   renderedMessageCount = messagesDiv.children.length;

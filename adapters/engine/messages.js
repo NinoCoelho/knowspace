@@ -11,6 +11,8 @@ const INTERNAL_MESSAGE_PATTERNS = [
   /\bDo not mention, summarize, or reuse output\b/,
   /\bReply to the user in a helpful way\b/,
   /\bdo not claim there is new command output\b/i,
+  /<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>/,
+  /^OpenClaw runtime context \(internal\):/,
 ];
 
 function extractMessageText(message) {
@@ -29,6 +31,33 @@ function isInternalMessage(text) {
   return INTERNAL_MESSAGE_PATTERNS.some(p => p.test(text));
 }
 
+/**
+ * Extract subagent result from an OpenClaw internal context message.
+ * Handles both formats:
+ *   1. <<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>...<<<END_OPENCLAW_INTERNAL_CONTEXT>>>
+ *   2. OpenClaw runtime context (internal):...
+ * Returns { taskName, status, resultContent } or null.
+ */
+function extractSubagentResult(text) {
+  if (!text) return null;
+
+  const hasWrapper = text.includes('<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>');
+  const hasRuntimePrefix = text.startsWith('OpenClaw runtime context (internal):');
+  if (!hasWrapper && !hasRuntimePrefix) return null;
+
+  const taskMatch = text.match(/^task:\s*(.+)$/m);
+  const statusMatch = text.match(/^status:\s*(.+)$/m);
+  const resultMatch = text.match(/<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>([\s\S]*?)<<<END_UNTRUSTED_CHILD_RESULT>>>/);
+
+  if (!resultMatch) return null;
+
+  return {
+    taskName: taskMatch ? taskMatch[1].trim() : 'Subagent',
+    status: statusMatch ? statusMatch[1].trim() : '',
+    resultContent: resultMatch[1].trim(),
+  };
+}
+
 function normalizeMessages(messages) {
   return (messages || [])
     .filter(m => (m.role === 'user' || m.role === 'assistant'))
@@ -37,6 +66,18 @@ function normalizeMessages(messages) {
       if (m.role === 'user') {
         text = text.replace(/^\[[\w\s:-]+\]\s*/, '');
       }
+
+      // Transform subagent result messages into structured data
+      const subagent = extractSubagentResult(text);
+      if (subagent) {
+        return {
+          role: 'assistant',
+          content: subagent.resultContent,
+          timestamp: m.timestamp,
+          subagent: { task: subagent.taskName, status: subagent.status },
+        };
+      }
+
       return { role: m.role, content: text, timestamp: m.timestamp };
     })
     .filter(m => m.content)
@@ -106,6 +147,7 @@ module.exports = {
   INTERNAL_MESSAGE_PATTERNS,
   extractMessageText,
   isInternalMessage,
+  extractSubagentResult,
   normalizeMessages,
   detectAgentStatus,
   isIntermediateMessage,

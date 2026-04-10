@@ -103,7 +103,12 @@ async function pollForReply(sessionKey, msgCountBefore, options = {}) {
       for (const msg of newNormalized) {
         if (msg.role !== 'assistant') continue;
         if (isIntermediate) continue; // last raw msg still has pending tool_use — don't emit yet
-        if (onMessage) onMessage({ role: 'assistant', content: msg.content, timestamp: msg.timestamp || new Date().toISOString() });
+        if (onMessage) onMessage({
+          role: 'assistant',
+          content: msg.content,
+          timestamp: msg.timestamp || new Date().toISOString(),
+          ...(msg.subagent ? { subagent: msg.subagent } : {}),
+        });
         found = true;
       }
 
