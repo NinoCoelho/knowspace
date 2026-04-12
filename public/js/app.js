@@ -5996,19 +5996,50 @@ function renderKanban(container) {
     cardsContainer.addEventListener('dragover', (e) => {
       e.preventDefault();
       cardsContainer.classList.add('active');
+      // Show drop indicator at insertion point
+      const indicator = cardsContainer.querySelector('.drop-indicator') || (() => {
+        const el = document.createElement('div');
+        el.className = 'drop-indicator';
+        return el;
+      })();
+      const cards = [...cardsContainer.querySelectorAll('.kanban-card:not(.dragging)')];
+      let inserted = false;
+      for (const c of cards) {
+        const rect = c.getBoundingClientRect();
+        if (e.clientY < rect.top + rect.height / 2) {
+          cardsContainer.insertBefore(indicator, c);
+          inserted = true;
+          break;
+        }
+      }
+      if (!inserted) cardsContainer.appendChild(indicator);
     });
 
-    cardsContainer.addEventListener('dragleave', () => {
-      cardsContainer.classList.remove('active');
+    cardsContainer.addEventListener('dragleave', (e) => {
+      if (!cardsContainer.contains(e.relatedTarget)) {
+        cardsContainer.classList.remove('active');
+        cardsContainer.querySelector('.drop-indicator')?.remove();
+      }
     });
 
     cardsContainer.addEventListener('drop', (e) => {
       e.preventDefault();
       cardsContainer.classList.remove('active');
+      // Determine target index from indicator position
+      const indicator = cardsContainer.querySelector('.drop-indicator');
+      let targetIndex = lane.cards.length; // default: end
+      if (indicator) {
+        const siblings = [...cardsContainer.querySelectorAll('.kanban-card:not(.dragging)')];
+        const nextCard = indicator.nextElementSibling;
+        if (nextCard && nextCard.classList.contains('kanban-card')) {
+          targetIndex = siblings.indexOf(nextCard);
+        }
+        indicator.remove();
+      }
       const cardIndex = e.dataTransfer.getData('cardIndex');
       const sourceLaneId = e.dataTransfer.getData('sourceLaneId');
       if (cardIndex && sourceLaneId) {
-        moveCard(sourceLaneId, lane.id, parseInt(cardIndex));
+        moveCard(sourceLaneId, lane.id, parseInt(cardIndex), targetIndex);
       }
     });
   });
@@ -6022,6 +6053,8 @@ function renderKanban(container) {
     });
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging');
+      document.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+      document.querySelectorAll('.drop-zone.active').forEach(el => el.classList.remove('active'));
     });
   });
 
@@ -6054,13 +6087,18 @@ async function deleteCard(laneId, cardId) {
   }
 }
 
-function moveCard(sourceLaneId, targetLaneId, cardIndex) {
+function moveCard(sourceLaneId, targetLaneId, cardIndex, targetIndex) {
   const sourceLane = currentKanban.lanes.find(l => l.id === sourceLaneId);
   const targetLane = currentKanban.lanes.find(l => l.id === targetLaneId);
-  
+
   if (sourceLane && targetLane) {
     const [card] = sourceLane.cards.splice(cardIndex, 1);
-    targetLane.cards.push(card);
+    // Adjust target index when moving within the same lane
+    let insertAt = targetIndex != null ? targetIndex : targetLane.cards.length;
+    if (sourceLaneId === targetLaneId && cardIndex < insertAt) {
+      insertAt--;
+    }
+    targetLane.cards.splice(insertAt, 0, card);
     saveKanban();
     renderKanban();
   }
