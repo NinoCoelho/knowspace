@@ -1,3 +1,24 @@
+// Notification sound for agent messages (Web Audio API — no external file needed)
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let _audioCtx;
+function playMessageSound() {
+  try {
+    if (!_audioCtx) _audioCtx = new AudioCtx();
+    const ctx = _audioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  } catch (_) { /* audio not available */ }
+}
+
 // Get token from URL or cookie
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get('token');
@@ -2940,6 +2961,7 @@ socket.on('chat:message', (data) => {
   clearTimeout(typingTimeout);
   typingTimeout = null;
   addMessage(data.content, data.role, data.timestamp, data.subagent);
+  if (data.role === 'assistant') playMessageSound();
 });
 
 socket.on('typing', (data) => {
