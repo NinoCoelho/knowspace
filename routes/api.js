@@ -771,105 +771,12 @@ function walkDirectory(basePath, relativePath, files) {
   });
 }
 
-function parseKanbanMarkdown(content) {
-  const lines = content.split('\n');
-  const kanban = { title: 'Kanban', lanes: [] };
-
-  let currentLane = null;
-  let currentCard = null;
-  let bodyLines = [];
-  let inFrontmatter = false;
-  let inObsidianBlock = false;
-  let laneUsesHeaders = false;
-
-  function pushCard() {
-    if (currentCard && currentLane) {
-      currentCard.body = bodyLines.join('\n').trim();
-      currentLane.cards.push(currentCard);
-    }
-    bodyLines = [];
-  }
-
-  lines.forEach(line => {
-    // Skip frontmatter
-    if (line.trim() === '---') {
-      inFrontmatter = !inFrontmatter;
-      return;
-    }
-    if (inFrontmatter) return;
-
-    // Skip Obsidian settings block
-    if (line.trim().startsWith('%%')) {
-      inObsidianBlock = !inObsidianBlock;
-      return;
-    }
-    if (inObsidianBlock) return;
-
-    // Board title: # Title
-    if (/^# /.test(line) && !line.startsWith('## ') && !line.startsWith('### ')) {
-      kanban.title = line.replace(/^# /, '').trim();
-    }
-    // Lane header: ## Lane Title
-    else if (line.startsWith('## ')) {
-      pushCard();
-      if (currentLane) kanban.lanes.push(currentLane);
-
-      currentLane = {
-        id: line.replace('## ', '').trim().toLowerCase().replace(/\s+/g, '-'),
-        title: line.replace('## ', '').trim(),
-        cards: []
-      };
-      currentCard = null;
-      laneUsesHeaders = false;
-    }
-    // Card header: ### Card Title
-    else if (line.startsWith('### ') && currentLane) {
-      pushCard();
-      laneUsesHeaders = true;
-      currentCard = {
-        id: Date.now().toString() + Math.random(),
-        title: line.replace('### ', '').trim(),
-        body: ''
-      };
-    }
-    // Legacy card: non-indented bullet "- Card Title" (old format, only when lane has no ### cards)
-    else if (/^- /.test(line) && !/^[\t ]/.test(line) && currentLane && !laneUsesHeaders) {
-      pushCard();
-      currentCard = {
-        id: Date.now().toString() + Math.random(),
-        title: line.replace(/^- (\[[ x]\] )?/, '').trim(),
-        body: ''
-      };
-    }
-    // Card body content
-    else if (currentCard) {
-      bodyLines.push(line);
-    }
-  });
-
-  pushCard();
-  if (currentLane) kanban.lanes.push(currentLane);
-
-  return kanban;
-}
-
-function serializeKanbanMarkdown(kanban) {
-  let markdown = `---\nkanban-plugin: basic\n---\n\n# ${kanban.title}\n\n`;
-
-  kanban.lanes.forEach(lane => {
-    markdown += `## ${lane.title}\n\n`;
-
-    lane.cards.forEach(card => {
-      markdown += `### ${card.title}\n`;
-      if (card.body) {
-        markdown += card.body + '\n';
-      }
-      markdown += '\n';
-    });
-  });
-
-  return markdown;
-}
+// Kanban parsing/serialization lives in lib/kanban — adds invisible
+// <!-- ks:* --> metadata (stable card ids, assignee, linked sessions,
+// vault refs) on top of the Obsidian Kanban format. See lib/kanban.js.
+const { parseKanban, serializeKanban } = require('../lib/kanban');
+const parseKanbanMarkdown = parseKanban;
+const serializeKanbanMarkdown = serializeKanban;
 
 function createDefaultKanban() {
   return {

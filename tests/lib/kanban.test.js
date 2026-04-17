@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseKanban, serializeKanban, parseKsLine, extractMetaFromBody } = require('./parser');
+const { parseKanban, serializeKanban, parseKsLine, extractMetaFromBody } = require('../../lib/kanban');
 
 const LEGACY_BOARD = `---
 kanban-plugin: basic
