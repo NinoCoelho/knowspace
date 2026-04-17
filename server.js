@@ -10,6 +10,7 @@ const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
 const providers = require('./adapters/providers');
 const engine = providers.engine;
+const sessionRouter = require('./lib/session-router');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
@@ -240,7 +241,8 @@ app.get('/api/chat/history', async (req, res) => {
   }
 
   const sessionKey = req.query.sessionKey || engine.paths.getDefaultSessionKey(clientSlug);
-  const history = await engine.chat.loadHistory(sessionKey);
+  const provider = sessionRouter.getProviderForSession(sessionKey);
+  const history = await provider.loadHistory(sessionKey);
   res.json({ messages: history });
 });
 
@@ -362,18 +364,19 @@ app.post('/api/chat/send', async (req, res) => {
   req.setTimeout(30 * 60 * 1000); // 30 min timeout for long agent responses
 
   try {
-    const historyBefore = await engine.chat.loadHistory(sessionKey, 50);
+    const provider = sessionRouter.getProviderForSession(sessionKey);
+    const historyBefore = await provider.loadHistory(sessionKey, 50);
     const msgCountBefore = historyBefore.length;
 
-    await engine.chat.sendMessage(sessionKey, message);
+    await provider.sendMessage(sessionKey, message);
 
-    await engine.chat.pollForReply(sessionKey, msgCountBefore, {
-      pollIntervalMs: 2000,
-      maxPolls: 900,
+    await provider.pollForReply(sessionKey, msgCountBefore, {
+      pollIntervalMs: provider.id === 'acp' ? 250 : 2000,
+      maxPolls: provider.id === 'acp' ? 7200 : 900,
       idlePollsToStop: 3,
     });
 
-    const historyAfter = await engine.chat.loadHistory(sessionKey, 50);
+    const historyAfter = await provider.loadHistory(sessionKey, 50);
     const newMessages = historyAfter.slice(msgCountBefore);
 
     res.json({ messages: newMessages });
@@ -444,13 +447,13 @@ io.on('connection', async (socket) => {
 
   // Send session list and load the most recent session's history
   try {
-    const sessions = await engine.sessions.listSessions(socket.clientSlug);
+    const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
     socket.emit('sessions:list', { sessions });
 
     if (sessions.length > 0) {
       // Auto-select the most recent session
       socket.activeSessionKey = sessions[0].key;
-      const history = await engine.chat.loadHistory(sessions[0].key);
+      const history = await sessionRouter.getProviderForSession(sessions[0].key).loadHistory(sessions[0].key);
       socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
     }
   } catch (error) {
@@ -461,7 +464,7 @@ io.on('connection', async (socket) => {
 
   socket.on('sessions:list', async () => {
     try {
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:list error:', error.message);
@@ -471,7 +474,7 @@ io.on('connection', async (socket) => {
   socket.on('sessions:switch', async (data) => {
     try {
       socket.activeSessionKey = data.sessionKey;
-      const history = await engine.chat.loadHistory(data.sessionKey);
+      const history = await sessionRouter.getProviderForSession(data.sessionKey).loadHistory(data.sessionKey);
       socket.emit('chat:history', { messages: history, sessionKey: data.sessionKey });
     } catch (error) {
       console.error('sessions:switch error:', error.message);
@@ -485,7 +488,7 @@ io.on('connection', async (socket) => {
 
       // Clear chat and refresh session list
       socket.emit('chat:history', { messages: [], sessionKey: newKey });
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:new error:', error.message);
@@ -495,7 +498,7 @@ io.on('connection', async (socket) => {
   socket.on('sessions:rename', async (data) => {
     try {
       await engine.sessions.renameSession(data.sessionKey, data.name);
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:rename error:', error.message);
@@ -508,10 +511,10 @@ io.on('connection', async (socket) => {
 
       // If deleting the active session, switch to the next available
       if (socket.activeSessionKey === data.sessionKey) {
-        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
         if (sessions.length > 0) {
           socket.activeSessionKey = sessions[0].key;
-          const history = await engine.chat.loadHistory(sessions[0].key);
+          const history = await sessionRouter.getProviderForSession(sessions[0].key).loadHistory(sessions[0].key);
           socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
         } else {
           socket.activeSessionKey = null;
@@ -519,7 +522,7 @@ io.on('connection', async (socket) => {
         }
         socket.emit('sessions:list', { sessions });
       } else {
-        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
         socket.emit('sessions:list', { sessions });
       }
     } catch (error) {
@@ -544,7 +547,7 @@ io.on('connection', async (socket) => {
 
       if (sessions.length > 0) {
         socket.activeSessionKey = sessions[0].key;
-        const history = await engine.chat.loadHistory(sessions[0].key);
+        const history = await sessionRouter.getProviderForSession(sessions[0].key).loadHistory(sessions[0].key);
         socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
       } else {
         socket.emit('chat:history', { messages: [], sessionKey: null });
@@ -572,7 +575,7 @@ io.on('connection', async (socket) => {
         socket.activeSessionKey = await engine.sessions.createSession(socket.clientSlug);
         // Immediately notify client of the new session so the sidebar updates
         socket.emit('chat:history', { messages: [], sessionKey: socket.activeSessionKey });
-        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
         socket.emit('sessions:list', { sessions });
       }
 
@@ -612,15 +615,19 @@ io.on('connection', async (socket) => {
       }
       console.log(`[chat] ${socket.clientSlug}: sending to ${sessionKey}`);
 
+      // Route by session key prefix — the chat loop is provider-agnostic
+      const targetProvider = sessionRouter.getProviderForSession(sessionKey);
+
       // Get message count before sending so we can detect the new reply
-      const historyBefore = await engine.chat.loadHistory(sessionKey, 50);
+      const historyBefore = await targetProvider.loadHistory(sessionKey, 50);
       const msgCountBefore = historyBefore.length;
 
-      // Send via the engine adapter
-      await engine.chat.sendMessage(sessionKey, messageText);
+      await targetProvider.sendMessage(sessionKey, messageText);
 
       // Poll for the assistant response — emits each reply immediately via onMessage
-      const result = await engine.chat.pollForReply(sessionKey, msgCountBefore, {
+      const result = await targetProvider.pollForReply(sessionKey, msgCountBefore, {
+        pollIntervalMs: targetProvider.id === 'acp' ? 250 : 2000,
+        maxPolls: targetProvider.id === 'acp' ? 7200 : 900,
         onProgress: (data) => socket.emit('agent:progress', typeof data === 'string' ? { status: data, tools: [] } : data),
         onMessage: (reply) => socket.emit('chat:message', reply),
         isDisconnected: () => socket.disconnected,
@@ -635,11 +642,12 @@ io.on('connection', async (socket) => {
       socket.emit('typing', { typing: false });
 
       if (!result.found) {
-        console.log(`[chat] ${socket.clientSlug}: agent polling timed out after 30 min for ${sessionKey}`);
+        console.log(`[chat] ${socket.clientSlug}: agent polling timed out for ${sessionKey}`);
       }
 
-      // Refresh session list (title may have been derived from first message)
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      // Refresh session list (title may have been derived from first message).
+      // Aggregate across providers so ACP sessions show up alongside OpenClaw ones.
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
 
     } catch (error) {
