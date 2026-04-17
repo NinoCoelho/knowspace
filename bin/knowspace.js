@@ -9,6 +9,8 @@ const commands = {
   daemon: '../cli/daemon',
   onboard: '../cli/onboard',
   tokens: '../cli/tokens',
+  providers: '../cli/providers',
+  agents: '../cli/agents',
 };
 
 const command = process.argv[2];
@@ -28,6 +30,8 @@ if (!command || command === '--help' || command === '-h') {
     tokens list                 List all client tokens
     tokens generate <slug>      Generate a new token
     tokens rotate <slug>        Rotate an existing token
+    providers <sub>             Manage providers (list/enable/disable/path)
+    agents <sub>                Manage agents (list/add/remove/show)
 
   Options:
     --help, -h                  Show this help
