@@ -2609,6 +2609,20 @@ document.getElementById('filePreviewCopy')?.addEventListener('click', () => {
     navigator.clipboard.writeText(p).then(() => showToast('Path copied'));
   }
 });
+document.getElementById('filePreviewDownload')?.addEventListener('click', () => {
+  const p = document.getElementById('filePreviewPath')?.textContent || '';
+  if (!p) return;
+  // Same-origin <a download> trick — browser saves with the basename
+  // (Content-Disposition from the backend wins over the URL guess).
+  const url = `/api/file/raw?token=${encodeURIComponent(token)}${asParam()}&path=${encodeURIComponent(p)}&download=1`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = p.split('/').pop() || 'file';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 1000);
+});
 // Delegate clicks on linkified paths anywhere in the document.
 document.addEventListener('click', (e) => {
   const a = e.target.closest('.file-path-link');

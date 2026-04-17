@@ -235,6 +235,13 @@ router.get('/file/raw', (req, res) => {
   res.setHeader('Content-Type', mime);
   res.setHeader('Content-Length', stat.size);
   res.setHeader('Cache-Control', 'private, max-age=300');
+  if (req.query.download === '1' || req.query.download === 'true') {
+    // RFC 5987: ASCII-safe filename + UTF-8 filename* for non-ASCII
+    const base = path.basename(resolved);
+    const safe = base.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '\\"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(base)}`);
+  }
   fs.createReadStream(resolved).pipe(res);
 });
 
