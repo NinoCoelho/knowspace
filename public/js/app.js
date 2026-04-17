@@ -6208,16 +6208,31 @@ function renderKanban(container) {
         </div>`;
     }).join('');
 
+    const laneHasAgent = !!lane.meta?.assignee;
+    const autoBadge = lane.meta?.autoDispatch
+      ? '<span class="lane-auto-badge" title="Auto-dispatch on drop">AUTO</span>'
+      : '';
+    const agentBadge = laneHasAgent
+      ? `<span class="lane-agent-badge" title="${escapeHtml(lane.meta.assignee)}">${escapeHtml(lane.meta.assignee.split(':').pop())}</span>`
+      : '';
     column.innerHTML = `
       <div class="lane-header">
-        <div class="flex items-center">
+        <div class="flex items-center" style="gap:6px;">
           <h3>${escapeHtml(lane.title)}</h3>
           <span class="lane-count">${lane.cards.length}</span>
+          ${agentBadge}${autoBadge}
         </div>
-        <button class="add-card-btn" style="border:none;background:none;cursor:pointer;color:var(--accent-primary);font-size:14px;padding:4px 8px;border-radius:6px;transition:background 0.15s;"
-                onmouseover="this.style.background='rgba(212,165,116,0.1)'" onmouseout="this.style.background='none'">
-          <i class="fas fa-plus"></i>
-        </button>
+        <div class="flex items-center" style="gap:2px;">
+          <button class="lane-config-btn" data-lane-id="${lane.id}" title="Lane settings"
+                  style="border:none;background:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:4px 6px;border-radius:6px;transition:background 0.15s;"
+                  onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='none'">
+            <i class="fas fa-gear"></i>
+          </button>
+          <button class="add-card-btn" style="border:none;background:none;cursor:pointer;color:var(--accent-primary);font-size:14px;padding:4px 8px;border-radius:6px;transition:background 0.15s;"
+                  onmouseover="this.style.background='rgba(212,165,116,0.1)'" onmouseout="this.style.background='none'">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
       </div>
       <div class="cards-container space-y-2 drop-zone" data-lane-id="${lane.id}">
         ${cardsHtml}
@@ -6229,6 +6244,12 @@ function renderKanban(container) {
     // Add card button — opens modal for new card
     column.querySelector('.add-card-btn').addEventListener('click', () => {
       openNewCardModal(lane.id);
+    });
+
+    // Lane config (gear) — opens lane settings modal
+    column.querySelector('.lane-config-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openLaneConfigModal(lane.id);
     });
 
     // Whole-card click → open the modal. Skips when clicking on action
@@ -6747,6 +6768,79 @@ socket.on('permission:request', (req) => {
   permissionQueue.push(req);
   showNextPermission();
 });
+
+// --- Lane settings (config which agent + prompt template owns the lane) ---
+
+let laneConfigState = null; // { laneId }
+
+async function openLaneConfigModal(laneId) {
+  const lane = currentKanban?.lanes?.find(l => l.id === laneId);
+  if (!lane) return;
+  laneConfigState = { laneId };
+  const titleEl = document.getElementById('laneConfigTitle');
+  if (titleEl) titleEl.textContent = lane.title;
+
+  // Populate agent select with the same /api/agents listing
+  const select = document.getElementById('laneConfigAssignee');
+  if (select) {
+    select.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const res = await fetch(`/api/agents?token=${token}${asParam()}`);
+      const data = await res.json();
+      const opts = ['<option value="">(none — manual dispatch only)</option>'];
+      const grouped = {};
+      for (const a of data.agents || []) (grouped[a.providerId] = grouped[a.providerId] || []).push(a);
+      for (const [pid, list] of Object.entries(grouped)) {
+        opts.push(`<optgroup label="${escapeHtml(pid)}">`);
+        for (const a of list) {
+          const v = `${pid}:${a.id}`;
+          const sel = v === lane.meta?.assignee ? ' selected' : '';
+          opts.push(`<option value="${escapeHtml(v)}"${sel}>${escapeHtml(a.name || a.id)}</option>`);
+        }
+        opts.push('</optgroup>');
+      }
+      select.innerHTML = opts.join('');
+    } catch (err) {
+      select.innerHTML = `<option value="">load failed: ${escapeHtml(err.message)}</option>`;
+    }
+  }
+
+  document.getElementById('laneConfigPrompt').value = lane.meta?.prompt || '';
+  document.getElementById('laneConfigAutoDispatch').checked = !!lane.meta?.autoDispatch;
+  document.getElementById('laneConfigModal').classList.remove('hidden');
+}
+
+function closeLaneConfigModal() {
+  document.getElementById('laneConfigModal')?.classList.add('hidden');
+  laneConfigState = null;
+}
+
+async function saveLaneConfig(clear = false) {
+  if (!laneConfigState) return;
+  const lane = currentKanban?.lanes?.find(l => l.id === laneConfigState.laneId);
+  if (!lane) return;
+  if (clear) {
+    lane.meta = {};
+  } else {
+    const assignee = document.getElementById('laneConfigAssignee').value || '';
+    const prompt   = document.getElementById('laneConfigPrompt').value || '';
+    const auto     = document.getElementById('laneConfigAutoDispatch').checked;
+    lane.meta = lane.meta || {};
+    if (assignee) lane.meta.assignee = assignee; else delete lane.meta.assignee;
+    if (prompt.trim()) lane.meta.prompt = prompt.trim(); else delete lane.meta.prompt;
+    if (auto) lane.meta.autoDispatch = true; else delete lane.meta.autoDispatch;
+  }
+  closeLaneConfigModal();
+  await saveKanban();
+  if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
+  else if (typeof renderKanban === 'function') renderKanban();
+  showToast('Lane settings saved');
+}
+
+document.getElementById('laneConfigClose')?.addEventListener('click', closeLaneConfigModal);
+document.getElementById('laneConfigCancel')?.addEventListener('click', closeLaneConfigModal);
+document.getElementById('laneConfigSave')?.addEventListener('click', () => saveLaneConfig(false));
+document.getElementById('laneConfigClear')?.addEventListener('click', () => saveLaneConfig(true));
 
 // --- Card dispatch (kanban → agent) ---
 

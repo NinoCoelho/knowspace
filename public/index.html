@@ -522,6 +522,30 @@
       color: var(--text-secondary);
       margin-top: 2px;
     }
+    .lane-agent-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      background: var(--bg-primary);
+      border: 1px solid var(--accent-primary);
+      color: var(--accent-primary);
+      letter-spacing: 0.02em;
+    }
+    .lane-auto-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      background: #15803d;
+      color: white;
+    }
+
     .file-path-link {
       display: inline-flex;
       align-items: center;
@@ -3224,6 +3248,59 @@
         <button id="closeShortcutsModalBtn" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">
           Got it
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lane Config Modal -->
+  <div id="laneConfigModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 560px; max-height: 80vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h3>
+          <i class="fas fa-gear mr-2" style="color: var(--accent-light);"></i>
+          Lane settings
+        </h3>
+        <button id="laneConfigClose" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 20px; overflow-y: auto;">
+        <div style="margin-bottom: 12px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Lane</div>
+          <div id="laneConfigTitle" style="font-size: 14px; font-weight: 500; margin-top: 2px;"></div>
+        </div>
+        <div style="margin-bottom: 12px;">
+          <label for="laneConfigAssignee" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+            Default agent <span style="text-transform: none; opacity: 0.7;">(applied when a card lands here)</span>
+          </label>
+          <select id="laneConfigAssignee"
+                  style="width: 100%; margin-top: 4px; padding: 8px 12px; border: 1px solid var(--border-light); border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary);">
+            <option value="">(none — manual dispatch only)</option>
+          </select>
+        </div>
+        <div style="margin-bottom: 12px;">
+          <label for="laneConfigPrompt" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+            Default instructions <span style="text-transform: none; opacity: 0.7;">(prepended to the card body when this lane is the target)</span>
+          </label>
+          <textarea id="laneConfigPrompt" rows="4" placeholder="e.g. Start designing the carousel. Output should be a 5-slide draft."
+                    style="width: 100%; margin-top: 4px; padding: 8px 12px; border: 1px solid var(--border-light); border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); font-family: inherit; resize: vertical;"></textarea>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-secondary); border-radius: 8px;">
+          <input id="laneConfigAutoDispatch" type="checkbox" style="cursor: pointer;" />
+          <label for="laneConfigAutoDispatch" style="font-size: 13px; cursor: pointer; flex: 1;">
+            <strong>Auto-dispatch on drop</strong>
+            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">When ON, dropping a card here fires the agent immediately. When OFF, the dispatch modal opens pre-filled.</div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; align-items: center; justify-content: space-between;">
+        <button id="laneConfigClear" class="px-3 py-2 rounded-lg text-sm" style="background: transparent; border: 1px solid var(--border-light); color: var(--text-secondary); cursor: pointer;">
+          Clear lane settings
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button id="laneConfigCancel" class="px-4 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); border: 1px solid var(--border-light); cursor: pointer;">Cancel</button>
+          <button id="laneConfigSave" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">Save</button>
+        </div>
       </div>
     </div>
   </div>
