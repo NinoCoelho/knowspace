@@ -4,29 +4,27 @@
 
 const prompts = require('./prompts');
 const gateway = require('./gateway');
-const workspace = require('./workspace');
 const vault = require('./vault');
 const skills = require('./skills');
 const env = require('./env');
 const { loadConfig, saveConfig } = require('./state');
 const AuthManager = require('../../middleware/auth');
+const { DEFAULT_USER_SLUG } = require('../constants');
 
 module.exports = async function menu() {
   const config = loadConfig();
 
-  console.log(`\n  Knowspace — ${config.slug || 'not configured'}\n`);
+  const configured = !!config.configuredAt;
+  console.log(`\n  Knowspace — ${configured ? 'configured' : 'not configured'}\n`);
 
   while (true) {
-    const installed = (config.installedSkills || []).length;
     const currentBaseUrl = env.getKey('KNOWSPACE_BASE_URL') || config.baseUrl || 'http://localhost:3445';
     const options = [
-      { label: 'Gateway', description: config.gatewayUrl || config.openclawDir || 'not set' },
+      { label: 'Gateway (OpenClaw)', description: config.gatewayUrl || config.openclawDir || 'not set' },
       { label: 'Vault location', description: config.vaultPath || 'not set' },
       { label: 'Public URL', description: currentBaseUrl },
-      { label: 'Skills', description: `${installed} installed` },
       { label: 'Access tokens', description: 'generate or list' },
       { label: 'Environment keys', description: 'view and update API keys' },
-      { label: 'Workspace templates', description: 'SOUL, USER, AGENTS, IDENTITY' },
       { label: 'Quit' },
     ];
 
@@ -62,17 +60,12 @@ module.exports = async function menu() {
         break;
       }
 
-      case 3: { // Skills
-        config.installedSkills = await skills.interactiveSkillSetup(config);
-        saveConfig(config);
-        break;
-      }
-
-      case 4: { // Tokens
+      case 3: { // Tokens
         const auth = new AuthManager();
         const tokenOpts = [
           { label: 'List tokens' },
           { label: 'Generate new token' },
+          { label: 'Rotate existing token' },
           { label: 'Back' },
         ];
         const tokenChoice = await prompts.select('Token management', tokenOpts);
@@ -82,22 +75,27 @@ module.exports = async function menu() {
             prompts.info('No tokens found');
           } else {
             for (const t of tokens) {
-              prompts.info(`${t.clientSlug.padEnd(24)} created: ${t.createdAt}`);
+              const tag = t.clientSlug === DEFAULT_USER_SLUG ? '' : ` (${t.clientSlug})`;
+              prompts.info(`created: ${t.createdAt}${tag}`);
             }
           }
-        } else if (tokenChoice === 1) {
-          const slug = await prompts.ask('Client slug', config.slug || '');
-          if (slug) {
-            const token = auth.generateToken(slug);
-            const baseUrl = env.getKey('KNOWSPACE_BASE_URL') || config.baseUrl || 'http://localhost:3445';
+        } else if (tokenChoice === 1 || tokenChoice === 2) {
+          const baseUrl = env.getKey('KNOWSPACE_BASE_URL') || config.baseUrl || 'http://localhost:3445';
+          const token = tokenChoice === 1
+            ? auth.generateToken(DEFAULT_USER_SLUG)
+            : auth.rotateToken(DEFAULT_USER_SLUG);
+          if (!token) {
+            prompts.warn('No existing token to rotate.');
+          } else {
             prompts.success(`Token: ${token}`);
-            prompts.info(`Link: ${baseUrl}/auth?token=${token}`);
+            prompts.info(`Sign in at ${baseUrl}/login`);
+            prompts.info(`Or: ${baseUrl}/auth?token=${token}`);
           }
         }
         break;
       }
 
-      case 5: { // Environment
+      case 4: { // Environment
         prompts.heading('Environment keys');
         const ksVars = env.readEnv(env.KNOWSPACE_ENV);
         const keys = Object.keys(ksVars);
@@ -125,21 +123,7 @@ module.exports = async function menu() {
         break;
       }
 
-      case 6: { // Workspace templates
-        const info = await workspace.setupWorkspace(config);
-        if (info) {
-          config.slug = info.slug;
-          config.clientName = info.clientName;
-          config.agentName = info.agentName;
-          config.timezone = info.timezone;
-          config.businessContext = info.businessContext;
-          config.vibeDescription = info.vibeDescription;
-          saveConfig(config);
-        }
-        break;
-      }
-
-      case 7: // Quit
+      case 5: // Quit
         prompts.close();
         return;
     }

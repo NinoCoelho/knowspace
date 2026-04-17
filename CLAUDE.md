@@ -104,11 +104,10 @@ cli/
     launchd.js               macOS launchd backend
     systemd.js               Linux systemd --user backend
   serve.js                   Start server interactively
-  tokens.js                  Token management
-  onboard.js                 Legacy: workspace templates + token (skill install removed in v2)
+  tokens.js                  Token management (list / generate / rotate)
+  constants.js               CLI-level constants (DEFAULT_USER_SLUG for v2 single-user)
 skills/
-  knowspace-onboard/         Legacy multi-tenant onboarding skill (no longer auto-installed)
-templates/                   Workspace markdown templates (SOUL, USER, AGENTS, IDENTITY, MEMORY)
+  knowspace-onboard/         Legacy multi-tenant onboarding skill (no longer auto-installed; kept for users who opt in via `knowspace configure`)
 tests/
   adapters/                  Tests for the openclaw provider internals
   providers/                 Registry, config, ACP agents/store/poll tests

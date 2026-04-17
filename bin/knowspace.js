@@ -1,13 +1,10 @@
 #!/usr/bin/env node
 
-const path = require('path');
-
 const commands = {
   serve: '../cli/serve',
   connect: '../cli/connect',
   configure: '../cli/configure',
   daemon: '../cli/daemon',
-  onboard: '../cli/onboard',
   tokens: '../cli/tokens',
   providers: '../cli/providers',
   agents: '../cli/agents',
@@ -17,26 +14,24 @@ const command = process.argv[2];
 
 if (!command || command === '--help' || command === '-h') {
   console.log(`
-  knowspace - Client Portal CLI
+  knowspace — multi-provider agent portal
 
   Usage:
     knowspace <command> [options]
 
   Commands:
-    serve                       Start the portal server
-    connect                     Configure the OpenClaw gateway connection
-    configure                   Interactive setup (wizard or menu)
-    daemon <sub>                Manage Knowspace as a system daemon (install/uninstall/start/stop/restart/status/logs)
-    tokens list                 List all client tokens
-    tokens generate <slug>      Generate a new token
-    tokens rotate <slug>        Rotate an existing token
-    providers <sub>             Manage providers (list/enable/disable/path)
-    agents <sub>                Manage agents (list/add/remove/show)
+    serve                          Start the portal server
+    connect                        Configure the OpenClaw gateway (optional)
+    configure                      Interactive setup (wizard or menu)
+    daemon <sub>                   Manage the Knowspace daemon (install/uninstall/start/stop/restart/status/logs)
+    tokens <sub>                   Manage access tokens (list/generate/rotate)
+    providers <sub>                Manage providers (list/enable/disable/path)
+    agents <sub>                   Manage agents (list/add/remove/show)
 
   Options:
-    --help, -h                  Show this help
+    --help, -h                     Show this help
 
-  Run knowspace <command> --help for command-specific help.
+  Run 'knowspace <command> --help' for command-specific help.
 `);
   process.exit(0);
 }
