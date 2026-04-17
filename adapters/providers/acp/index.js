@@ -14,6 +14,7 @@ const os = require('node:os');
 const agents = require('./agents');
 const connection = require('./connection');
 const store = require('./session-store');
+const probe = require('./probe');
 
 const SESSION_PREFIX = 'acp:';
 
@@ -77,12 +78,29 @@ async function ensureConnection(agentId) {
 }
 
 async function listAgents() {
-  return agents.listRecipes(_recipeOverrides).map(r => ({
-    id: r.id,
-    name: r.name,
-    kind: r.kind || 'chat',
-    description: r.description,
-    defaultCwd: r.defaultCwd,
+  const recipes = agents.listRecipes(_recipeOverrides);
+  const results = await Promise.all(recipes.map(async (r) => {
+    const { available, reason } = await probe.probeWithCache(r);
+    return { recipe: r, available, reason };
+  }));
+  return results
+    .filter(x => x.available)
+    .map(x => ({
+      id: x.recipe.id,
+      name: x.recipe.name,
+      kind: x.recipe.kind || 'chat',
+      description: x.recipe.description,
+      defaultCwd: x.recipe.defaultCwd,
+    }));
+}
+
+// Lists every recipe with its detection outcome — useful for an
+// "about / providers health" view and for debugging.
+async function listAgentsWithAvailability() {
+  const recipes = agents.listRecipes(_recipeOverrides);
+  return Promise.all(recipes.map(async (r) => {
+    const p = await probe.probeWithCache(r);
+    return { id: r.id, name: r.name, kind: r.kind || 'chat', description: r.description, ...p };
   }));
 }
 
@@ -297,9 +315,11 @@ module.exports = {
   provider,
   setRecipeOverrides,
   setPermissionBroker,
+  listAgentsWithAvailability,
   // Test seams
   _buildSessionKey: buildSessionKey,
   _parseSessionKey: parseSessionKey,
   _store: store,
   _connection: connection,
+  _probe: probe,
 };

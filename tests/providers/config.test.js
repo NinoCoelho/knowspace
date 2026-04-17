@@ -53,6 +53,7 @@ describe('providers/config', () => {
   });
 
   it('applyConfig wires ACP overrides into the provider', async () => {
+    acp._probe.clearCache();
     const fakeRegistry = {
       listProviders() { return []; },
       unregisterProvider() {},
@@ -62,7 +63,9 @@ describe('providers/config', () => {
         acp: {
           agents: {
             'claude-code': { name: 'Custom Name' },
-            'my-coder': { name: 'Mine', cmd: 'mycli', args: [], kind: 'coder' },
+            // Use `node` (always in PATH during tests) so the probe
+            // reports the override as available.
+            'my-coder': { name: 'Mine', cmd: 'node', args: [], kind: 'coder' },
           },
         },
       },
@@ -70,6 +73,7 @@ describe('providers/config', () => {
     const list = await acp.provider.listAgents();
     assert.equal(list.find(a => a.id === 'claude-code').name, 'Custom Name');
     assert.ok(list.find(a => a.id === 'my-coder'));
+    acp._probe.clearCache();
   });
 
   it('applyConfig unregisters disabled providers', () => {

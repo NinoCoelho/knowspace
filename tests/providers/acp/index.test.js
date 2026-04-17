@@ -41,14 +41,42 @@ describe('acp/index', () => {
   });
 
   it('setRecipeOverrides changes listAgents output', async () => {
+    acp._probe.clearCache();
+    // Use `node` as the cmd — it's always in PATH in a Node test env, so
+    // the probe will report the agent as available.
     acp.setRecipeOverrides({
       'claude-code': { name: 'Custom Claude' },
-      myagent: { name: 'Mine', cmd: 'my', args: [], kind: 'chat' },
+      myagent: { name: 'Mine', cmd: 'node', args: [], kind: 'chat' },
     });
     const list = await acp.provider.listAgents();
     assert.equal(list.find(a => a.id === 'claude-code').name, 'Custom Claude');
     assert.ok(list.find(a => a.id === 'myagent'));
     acp.setRecipeOverrides({}); // reset for other tests
+    acp._probe.clearCache();
+  });
+
+  it('listAgents hides recipes whose binary is missing', async () => {
+    acp._probe.clearCache();
+    acp.setRecipeOverrides({
+      ghost: { name: 'Ghost', cmd: '/no/such/binary/kn-xyz', args: [], kind: 'chat' },
+    });
+    const list = await acp.provider.listAgents();
+    assert.equal(list.find(a => a.id === 'ghost'), undefined);
+    acp.setRecipeOverrides({});
+    acp._probe.clearCache();
+  });
+
+  it('listAgentsWithAvailability reports both available and unavailable', async () => {
+    acp._probe.clearCache();
+    acp.setRecipeOverrides({
+      ghost: { name: 'Ghost', cmd: '/no/such/binary/kn-xyz', args: [], kind: 'chat' },
+    });
+    const all = await acp.listAgentsWithAvailability();
+    const ghost = all.find(a => a.id === 'ghost');
+    assert.ok(ghost);
+    assert.equal(ghost.available, false);
+    acp.setRecipeOverrides({});
+    acp._probe.clearCache();
   });
 
   it('loadHistory returns empty array for unknown session', async () => {
