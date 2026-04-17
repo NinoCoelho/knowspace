@@ -2459,6 +2459,132 @@ if (typeof marked !== 'undefined') {
   });
 }
 
+// --- File-path linkifier ---
+// Replaces absolute (/Users/..., ~/...) and recognized-extension paths
+// inside text nodes with clickable links that open a preview modal.
+// Idempotent and DOM-safe — only walks text nodes, never re-touches
+// already-wrapped anchors.
+
+const FILE_PATH_EXT = '(?:md|markdown|txt|json|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|sh|bash|zsh|html|css|scss|sass|yml|yaml|toml|xml|svg|sql|env|log|ini|conf|cfg|gradle)';
+// Permits spaces inside the path (macOS "Mobile Documents" etc).
+const FILE_PATH_RE = new RegExp(
+  `((?:~|\\/)[\\w./~\\- ]+\\.${FILE_PATH_EXT})(?=$|[\\s,;:.!?)\\]}'"\`])`,
+  'g',
+);
+
+function linkifyFilePaths(root) {
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      // Skip text inside already-linkified nodes, code blocks, anchors
+      const p = n.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      if (p.closest('a, .file-path-link, code, pre, script, style')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return FILE_PATH_RE.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const targets = [];
+  let n;
+  while ((n = walker.nextNode())) targets.push(n);
+  for (const node of targets) {
+    const text = node.nodeValue;
+    FILE_PATH_RE.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = FILE_PATH_RE.exec(text)) !== null) {
+      const start = m.index;
+      const matched = m[1];
+      if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
+      const a = document.createElement('a');
+      a.className = 'file-path-link';
+      a.href = 'javascript:void(0)';
+      a.dataset.path = matched;
+      a.title = matched;
+      a.textContent = matched.split('/').pop();
+      frag.appendChild(a);
+      last = start + matched.length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+// Open the file preview modal for an absolute (or ~/) path.
+async function openFilePreview(absPath) {
+  const modal = document.getElementById('filePreviewModal');
+  const basenameEl = document.getElementById('filePreviewBasename');
+  const bodyEl = document.getElementById('filePreviewBody');
+  const pathEl = document.getElementById('filePreviewPath');
+  if (!modal || !bodyEl) return;
+
+  const fallbackName = absPath.split('/').pop();
+  basenameEl.textContent = fallbackName;
+  pathEl.textContent = absPath;
+  bodyEl.innerHTML = '<div style="padding:8px;color:var(--text-secondary);">Loading…</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const url = `/api/file/preview?token=${token}${asParam()}&path=${encodeURIComponent(absPath)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      bodyEl.innerHTML = `<div style="color:#b91c1c;">${escapeHtml(err.error || 'Failed to load')}</div>`;
+      return;
+    }
+    const data = await res.json();
+    basenameEl.textContent = data.basename || fallbackName;
+    pathEl.textContent = data.path || absPath;
+    if (data.binary) {
+      bodyEl.innerHTML = `<div style="color:var(--text-secondary);">Binary file — ${formatBytes(data.size)}. Open it locally to view.</div>`;
+      return;
+    }
+    if (['md','markdown'].includes(data.ext)) {
+      bodyEl.innerHTML = `<div class="prose max-w-none">${marked.parse(data.content || '')}</div>`;
+    } else {
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:var(--bg-secondary);padding:12px;border-radius:8px;font-size:12px;line-height:1.4;';
+      pre.textContent = data.content || '';
+      bodyEl.innerHTML = '';
+      bodyEl.appendChild(pre);
+    }
+    if (data.truncated) {
+      const note = document.createElement('div');
+      note.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-secondary);';
+      note.textContent = `Truncated — file is ${formatBytes(data.size)}, showing first 200 KB.`;
+      bodyEl.appendChild(note);
+    }
+  } catch (err) {
+    bodyEl.innerHTML = `<div style="color:#b91c1c;">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function formatBytes(n) {
+  if (typeof n !== 'number') return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+document.getElementById('filePreviewClose')?.addEventListener('click', () => {
+  document.getElementById('filePreviewModal')?.classList.add('hidden');
+});
+document.getElementById('filePreviewCopy')?.addEventListener('click', () => {
+  const p = document.getElementById('filePreviewPath')?.textContent || '';
+  if (p && navigator.clipboard) {
+    navigator.clipboard.writeText(p).then(() => showToast('Path copied'));
+  }
+});
+// Delegate clicks on linkified paths anywhere in the document.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('.file-path-link');
+  if (!a) return;
+  e.preventDefault();
+  openFilePreview(a.dataset.path);
+});
+
 // Render markdown with all post-processing enhancements
 function renderMarkdown(content, container) {
   if (typeof marked === 'undefined') return escapeHtml(content);
@@ -2514,6 +2640,11 @@ function renderMarkdown(content, container) {
         });
       } catch (e) { /* math render error */ }
     }
+
+    // Linkify absolute file paths (anywhere on disk under $HOME) so the
+    // user can preview / copy them without scrolling sideways through a
+    // wall of text.
+    try { linkifyFilePaths(container); } catch (e) { /* non-fatal */ }
 
     // Image lightbox
     container.querySelectorAll('img.lightbox-img').forEach(img => {
@@ -6056,14 +6187,11 @@ function renderKanban(container) {
 
     const cardsHtml = lane.cards.map((card, index) => {
       return `
-        <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}" data-lane-id="${lane.id}">
+        <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}" data-lane-id="${lane.id}" title="Click to open">
           ${renderCardContent(card)}
           <div class="card-actions">
             <button class="kebab-card-btn" data-card-id="${card.id}" data-lane-id="${lane.id}" title="AI actions">
               <i class="fas fa-ellipsis-vertical text-xs"></i>
-            </button>
-            <button class="edit-card-btn" data-card-id="${card.id}" title="Edit">
-              <i class="fas fa-pen text-xs"></i>
             </button>
             <button class="delete-card-btn" data-card-id="${card.id}" title="Delete">
               <i class="fas fa-trash text-xs"></i>
@@ -6095,11 +6223,14 @@ function renderKanban(container) {
       openNewCardModal(lane.id);
     });
 
-    // Edit/delete buttons
-    column.querySelectorAll('.edit-card-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openCardModal(lane.id, btn.dataset.cardId);
+    // Whole-card click → open the modal. Skips when clicking on action
+    // buttons, drag-handle areas, or anything intentionally interactive
+    // (checkboxes, links inside the body).
+    column.querySelectorAll('.kanban-card').forEach(cardEl => {
+      cardEl.addEventListener('click', (e) => {
+        if (e.target.closest('.card-actions')) return;
+        if (e.target.closest('input,textarea,a,button,select,label')) return;
+        openCardModal(cardEl.dataset.laneId, cardEl.dataset.cardId);
       });
     });
 
@@ -7110,6 +7241,7 @@ function renderCardChatMessage(container, content, role) {
 
   if (role === 'assistant') {
     div.innerHTML = marked.parse(content || '');
+    try { linkifyFilePaths(div); } catch { /* non-fatal */ }
     // Add "Apply to card" button
     const applyBtn = document.createElement('button');
     applyBtn.className = 'apply-to-card-btn';

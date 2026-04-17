@@ -145,6 +145,67 @@ router.put('/vault/file', (req, res) => {
   }
 });
 
+// Preview any file the user owns (vault, project dir, anywhere under
+// $HOME). Used by the chat to render file-path mentions as clickable
+// previews rather than walls of text.
+router.get('/file/preview', (req, res) => {
+  const requested = req.query.path;
+  if (!requested) return res.status(400).json({ error: 'path required' });
+
+  // Expand ~ and resolve to absolute
+  let abs = requested;
+  if (abs.startsWith('~/')) abs = path.join(os.homedir(), abs.slice(2));
+  if (abs === '~') abs = os.homedir();
+  if (!path.isAbsolute(abs)) {
+    const vaultBase = getVaultBase(req.clientSlug);
+    abs = path.join(vaultBase, abs);
+  }
+
+  let resolved;
+  try { resolved = fs.realpathSync(abs); }
+  catch { return res.status(404).json({ error: 'not found', path: abs }); }
+
+  // Single-user portal — restrict to the user's home directory to avoid
+  // accidentally leaking system files via crafted paths.
+  const home = fs.realpathSync(os.homedir());
+  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
+    return res.status(403).json({ error: 'outside home directory' });
+  }
+
+  let stat;
+  try { stat = fs.statSync(resolved); }
+  catch { return res.status(404).json({ error: 'not found' }); }
+  if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+
+  const MAX = 200 * 1024;
+  let content = '';
+  let truncated = false;
+  let binary = false;
+  const ext = path.extname(resolved).toLowerCase().replace('.', '');
+  const textExts = ['md','markdown','txt','json','csv','tsv','js','mjs','cjs','ts','tsx','jsx','py','rb','go','rs','java','kt','swift','sh','bash','zsh','html','css','scss','sass','yml','yaml','toml','xml','svg','sql','env','log','ini','conf','cfg','dockerfile','makefile','gradle'];
+  if (!textExts.includes(ext) && !['readme','license','dockerfile','makefile'].includes(path.basename(resolved).toLowerCase())) {
+    binary = true;
+  } else {
+    const buf = fs.readFileSync(resolved);
+    if (buf.length > MAX) {
+      content = buf.slice(0, MAX).toString('utf8');
+      truncated = true;
+    } else {
+      content = buf.toString('utf8');
+    }
+  }
+
+  res.json({
+    path: resolved,
+    basename: path.basename(resolved),
+    ext,
+    size: stat.size,
+    truncated,
+    binary,
+    content,
+  });
+});
+
 // Delete vault file
 router.delete('/vault/file', (req, res) => {
   const clientSlug = req.clientSlug;

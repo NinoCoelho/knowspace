@@ -522,6 +522,34 @@
       color: var(--text-secondary);
       margin-top: 2px;
     }
+    .file-path-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 8px;
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      color: var(--accent-primary);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.92em;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .file-path-link:hover {
+      background: var(--accent-light);
+      color: var(--bg-primary);
+    }
+    .file-path-link::before {
+      content: "\f15b"; /* fa-file */
+      font-family: "Font Awesome 6 Free";
+      font-weight: 900;
+      font-size: 0.85em;
+      opacity: 0.7;
+    }
+
+    .kanban-card { cursor: pointer; }
+
     .session-item .agent-pill {
       display: inline-block;
       padding: 1px 6px;
@@ -3195,6 +3223,30 @@
       <div class="modal-footer">
         <button id="closeShortcutsModalBtn" class="px-4 py-2 rounded-lg text-white text-sm font-medium" style="background: var(--accent-primary); border: none; cursor: pointer;">
           Got it
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Preview Modal -->
+  <div id="filePreviewModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width: 720px; max-height: 80vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h3>
+          <i class="fas fa-file-lines mr-2" style="color: var(--accent-light);"></i>
+          <span id="filePreviewBasename" style="font-family: monospace;">file</span>
+        </h3>
+        <button id="filePreviewClose" class="text-gray-400 hover:text-gray-600" style="border:none;background:none;cursor:pointer;font-size:16px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 0; overflow-y: auto; flex: 1;">
+        <div id="filePreviewBody" style="padding: 16px; font-size: 13px; line-height: 1.5;"></div>
+      </div>
+      <div class="modal-footer" style="display: flex; align-items: center; gap: 8px;">
+        <code id="filePreviewPath" style="flex: 1; font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--bg-secondary); padding: 6px 10px; border-radius: 6px;"></code>
+        <button id="filePreviewCopy" class="px-3 py-2 rounded-lg text-sm" style="background: var(--bg-secondary); border: 1px solid var(--border-light); cursor: pointer;" title="Copy full path">
+          <i class="fas fa-copy"></i>
         </button>
       </div>
     </div>
