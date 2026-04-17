@@ -35,13 +35,30 @@ function getDefaultProvider() {
   return getProvider(DEFAULT_PROVIDER_ID);
 }
 
-module.exports = {
+function unregisterProvider(id) {
+  return providers.delete(id);
+}
+
+const registry = {
   DEFAULT_PROVIDER_ID,
   getProvider,
   listProviders,
   registerProvider,
+  unregisterProvider,
   getDefaultProvider,
   // Back-compat: legacy `engine` shape used by server.js, routes/api.js, etc.
   // Keeps existing code working while we migrate call sites incrementally.
   engine: openclaw,
 };
+
+// Apply ~/.knowspace/providers.json overrides at module load time so the
+// rest of the app sees the configured set. Loading is best-effort —
+// missing or malformed files leave the defaults in place.
+try {
+  const config = require('./config');
+  config.applyConfig(registry);
+} catch (err) {
+  console.warn(`[providers] config load failed: ${err.message}`);
+}
+
+module.exports = registry;
