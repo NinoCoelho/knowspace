@@ -2342,16 +2342,21 @@ function renderAgentPicker(agents) {
 
   agentPickerMenu.innerHTML = html;
   agentPickerMenu.querySelectorAll('.agent-picker-row').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const providerId = btn.dataset.provider;
       const agentId = btn.dataset.agent;
       const isCoder = btn.dataset.kind === 'coder';
+      agentPickerMenu.classList.add('hidden');
       let cwd;
       if (isCoder) {
-        cwd = window.prompt(`Working directory for ${agentId} (leave blank for portal cwd):`, '') || undefined;
-        if (cwd === '') cwd = undefined;
+        const answer = await showPrompt(
+          `Working directory for ${agentId}`,
+          'Absolute path the agent should treat as its workspace. Leave blank to use the portal\'s cwd.',
+          '',
+        );
+        if (answer === null) return; // user cancelled
+        cwd = answer.trim() || undefined;
       }
-      agentPickerMenu.classList.add('hidden');
       if (currentView !== 'chat') switchView('chat');
       socket.emit('sessions:newWithAgent', { providerId, agentId, cwd });
     });
