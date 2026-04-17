@@ -62,14 +62,38 @@ adapters/providers/
       enumerates Jhones/Nando/Coury/David/...; ACP enumerates
       claude-code/hermes/codex)
 
-## Out of scope (next session)
+## Done after the original plan (commits J–O)
 
-- Frontend changes (provider/agent picker, dispatch UI, session badges) — needs
-  browser verification per CLAUDE.md, not safe to do headless
-- CLI: `knowspace providers add`, `knowspace agents add`, slim onboard
-- Tool-use approval UI for ACP `requestPermission` flow (POC stubbed it)
-- Terminal ops for ACP coder mode (needs node-pty)
-- Removing the legacy `knowspace-onboard` skill
+- [x] **Commit J**: `knowspace providers` and `knowspace agents` CLI
+      (list/add/remove/show/enable/disable). 10 integration tests drive the
+      binary end-to-end against an isolated config file.
+- [x] **Commit K**: Frontend dispatch UI — "Dispatch to agent…" item in
+      the kanban card context menu, modal listing agents grouped by
+      provider with optional cwd, meta footer on cards (assignee +
+      session-status pill).
+- [x] **Commit L**: `lib/session-router.js` + server.js plumbing — chat
+      operations route by session key prefix so `acp:*` sessions are
+      chatable through the existing chat loop.
+- [x] **Commit M**: After dispatch, jump to the chat view on the new
+      session so the user sees the agent's reply instead of staring at
+      the kanban.
+- [x] **Commit N**: Slimmed `knowspace connect` and `knowspace onboard`
+      — skill installation removed, multi-tenant onboarding is gone.
+      Workspace template scaffolding + token generation kept.
+- [x] **Commit O**: CLAUDE.md updated to reflect the v2 architecture.
+
+## Still deferred (next session)
+
+- Tool-use approval UI: backend queues an ACP `requestPermission` event
+  on a websocket, frontend pops a modal, user approves/denies.
+- Terminal ops for ACP coder mode: node-pty-backed `createTerminal` /
+  `terminalOutput` / etc. so coder agents can actually run shells.
+- Provider/agent picker for "new chat" in the sidebar — currently new
+  chats default to the OpenClaw provider; ACP chats only exist via
+  dispatch. Picker would let the user start an ACP session from the
+  chat sidebar without needing a kanban card.
+- Persistence for ACP sessions across server restart (currently
+  in-memory only via session-store).
 
 ## Verification
 
