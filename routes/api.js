@@ -8,6 +8,7 @@ const Fuse = require('fuse.js');
 const providersRegistry = require('../adapters/providers');
 const { renderEnvelope, envelopeFromCard } = require('../lib/envelope');
 const sessionRouter = require('../lib/session-router');
+const fileResolver = require('../lib/file-resolver');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
@@ -153,25 +154,10 @@ router.get('/file/preview', (req, res) => {
   const requested = req.query.path;
   if (!requested) return res.status(400).json({ error: 'path required' });
 
-  // Expand ~ and resolve to absolute
-  let abs = requested;
-  if (abs.startsWith('~/')) abs = path.join(os.homedir(), abs.slice(2));
-  if (abs === '~') abs = os.homedir();
-  if (!path.isAbsolute(abs)) {
-    const vaultBase = getVaultBase(req.clientSlug);
-    abs = path.join(vaultBase, abs);
-  }
-
-  let resolved;
-  try { resolved = fs.realpathSync(abs); }
-  catch { return res.status(404).json({ error: 'not found', path: abs }); }
-
-  // Single-user portal — restrict to the user's home directory to avoid
-  // accidentally leaking system files via crafted paths.
-  const home = fs.realpathSync(os.homedir());
-  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
-    return res.status(403).json({ error: 'outside home directory' });
-  }
+  const vaultBase = getVaultBase(req.clientSlug);
+  const hit = fileResolver.resolve(requested, vaultBase);
+  if (!hit) return res.status(404).json({ error: 'not found', requested });
+  const resolved = hit.path;
 
   let stat;
   try { stat = fs.statSync(resolved); }
@@ -206,6 +192,8 @@ router.get('/file/preview', (req, res) => {
 
   res.json({
     path: resolved,
+    requested,
+    strategy: hit.strategy,
     basename: path.basename(resolved),
     ext,
     size: stat.size,
@@ -223,22 +211,10 @@ router.get('/file/raw', (req, res) => {
   const requested = req.query.path;
   if (!requested) return res.status(400).json({ error: 'path required' });
 
-  let abs = requested;
-  if (abs.startsWith('~/')) abs = path.join(os.homedir(), abs.slice(2));
-  if (abs === '~') abs = os.homedir();
-  if (!path.isAbsolute(abs)) {
-    const vaultBase = getVaultBase(req.clientSlug);
-    abs = path.join(vaultBase, abs);
-  }
-
-  let resolved;
-  try { resolved = fs.realpathSync(abs); }
-  catch { return res.status(404).json({ error: 'not found' }); }
-
-  const home = fs.realpathSync(os.homedir());
-  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
-    return res.status(403).json({ error: 'outside home directory' });
-  }
+  const vaultBase = getVaultBase(req.clientSlug);
+  const hit = fileResolver.resolve(requested, vaultBase);
+  if (!hit) return res.status(404).json({ error: 'not found' });
+  const resolved = hit.path;
 
   let stat;
   try { stat = fs.statSync(resolved); }

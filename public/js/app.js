@@ -2545,6 +2545,11 @@ async function openFilePreview(absPath) {
     const data = await res.json();
     basenameEl.textContent = data.basename || fallbackName;
     pathEl.textContent = data.path || absPath;
+    // If we resolved via vault-rooted / vault-basename / etc, surface
+    // that on the path tooltip so the user can see which heuristic ran.
+    if (data.strategy && data.strategy !== 'absolute') {
+      pathEl.title = `Resolved via ${data.strategy} (asked for: ${data.requested || absPath})`;
+    }
     if (data.kind === 'image') {
       // Stream bytes from /api/file/raw with an auth token so the <img>
       // request hits the same session.
