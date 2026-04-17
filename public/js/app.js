@@ -6551,6 +6551,15 @@ async function submitDispatch() {
     else if (typeof renderKanban === 'function') renderKanban();
     if (typeof toast === 'function') toast(`Dispatched to ${data.providerId}:${data.agentId}`);
     else console.log('[dispatch] ok', data);
+    // Hop to the chat view on the new session so the user sees the agent reply.
+    // Refresh sessions:list so the sidebar picks up the freshly-created ACP session.
+    try {
+      socket.emit('sessions:list');
+      socket.emit('sessions:switch', { sessionKey: data.sessionKey });
+      if (typeof switchView === 'function') switchView('chat');
+    } catch (err) {
+      console.warn('[dispatch] could not auto-switch to chat:', err.message);
+    }
   } catch (err) {
     alert(`Dispatch failed: ${err.message}`);
   } finally {
