@@ -3160,15 +3160,7 @@
       </div>
 
       <!-- Chat Tab -->
-      <div id="cardChatPane" class="hidden" style="flex:1; display:flex; flex-direction:column; overflow:hidden; min-height:300px;">
-        <!-- Collapsible card context -->
-        <div id="cardChatContext" style="border-bottom:1px solid var(--border-light); padding:8px 12px;">
-          <button id="cardChatContextToggle" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-secondary);width:100%;padding:2px 0;">
-            <i class="fas fa-chevron-down" style="font-size:10px;transition:transform 0.15s;"></i>
-            <span>Card Context</span>
-          </button>
-          <div id="cardChatContextContent" class="hidden" style="margin-top:8px;padding:8px;border-radius:8px;font-size:13px;max-height:120px;overflow-y:auto;background:var(--bg-secondary);line-height:1.5;color:var(--text-secondary);"></div>
-        </div>
+      <div id="cardChatPane" style="display:none; flex:1; flex-direction:column; overflow:hidden; min-height:300px;">
         <!-- Messages -->
         <div id="cardChatMessages" style="flex:1; overflow-y:auto; padding:12px;"></div>
         <!-- Input -->

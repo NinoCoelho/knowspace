@@ -7293,8 +7293,10 @@ function setCardSessionKey(laneId, cardTitle, sessionKey) {
 function showCardTab(tab) {
   document.getElementById('cardTabEdit').classList.toggle('active', tab === 'edit');
   document.getElementById('cardTabChat').classList.toggle('active', tab === 'chat');
-  document.getElementById('cardEditPane').classList.toggle('hidden', tab !== 'edit');
-  document.getElementById('cardChatPane').classList.toggle('hidden', tab !== 'chat');
+  // Use inline style.display directly — both panes have explicit
+  // display rules (block / flex) that beat the .hidden utility class.
+  document.getElementById('cardEditPane').style.display = tab === 'edit' ? '' : 'none';
+  document.getElementById('cardChatPane').style.display = tab === 'chat' ? 'flex' : 'none';
   document.getElementById('cardEditFooter').style.display = tab === 'edit' ? '' : 'none';
   if (tab === 'chat') initCardChat();
 }
@@ -7302,16 +7304,6 @@ function showCardTab(tab) {
 // Tab click handlers
 document.getElementById('cardTabEdit')?.addEventListener('click', () => showCardTab('edit'));
 document.getElementById('cardTabChat')?.addEventListener('click', () => showCardTab('chat'));
-
-// Context toggle
-document.getElementById('cardChatContextToggle')?.addEventListener('click', () => {
-  const content = document.getElementById('cardChatContextContent');
-  const icon = document.querySelector('#cardChatContextToggle i');
-  if (content) {
-    content.classList.toggle('hidden');
-    if (icon) icon.style.transform = content.classList.contains('hidden') ? '' : 'rotate(180deg)';
-  }
-});
 
 // Send message handler
 document.getElementById('cardChatSend')?.addEventListener('click', sendCardChatMessage);
@@ -7347,15 +7339,6 @@ async function initCardChat() {
   if (!lane) return;
   const card = migrateCard(lane.cards.find(c => c.id === editingCard.cardId));
   if (!card) return;
-
-  // Render card context (collapsed by default)
-  const contextContent = document.getElementById('cardChatContextContent');
-  if (contextContent) {
-    const assignee = card.meta?.assignee
-      ? `<div style="font-size:11px;margin-top:6px;color:var(--text-secondary);">Assignee: <code>${escapeHtml(card.meta.assignee)}</code></div>`
-      : '';
-    contextContent.innerHTML = `<strong>${escapeHtml(card.title)}</strong>` + (card.body ? `<br>${marked.parse(card.body)}` : '') + assignee;
-  }
 
   const msgContainer = document.getElementById('cardChatMessages');
   if (!msgContainer) return;
