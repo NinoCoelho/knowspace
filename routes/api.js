@@ -11,24 +11,24 @@ const sessionRouter = require('../lib/session-router');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
-function getVaultBase(clientSlug) {
+function getVaultBase(_clientSlug) {
+  // v2 single-user: vault is a global path from ~/.knowspace/config.json.
+  // Legacy per-slug layout only used when config.slug is still pinned.
   let vaultPath;
   try {
     const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
-    if (config.vaultPath && config.slug === clientSlug) {
-      vaultPath = config.vaultPath;
-    }
+    if (config.vaultPath) vaultPath = config.vaultPath;
+    else if (config.slug) vaultPath = path.join(os.homedir(), config.slug, 'workspace', 'vault');
   } catch {
     // config not found or invalid — fall through
   }
   if (!vaultPath) {
-    vaultPath = path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+    vaultPath = path.join(os.homedir(), '.knowspace', 'vault');
   }
-  // Resolve symlinks so path comparisons work correctly (e.g. /Users → /private/Users on macOS)
   try {
     return fs.realpathSync(vaultPath);
   } catch {
-    return vaultPath; // path doesn't exist yet
+    return vaultPath;
   }
 }
 

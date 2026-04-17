@@ -16,18 +16,20 @@ const acp = require('./adapters/providers/acp');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
-function getVaultBase(clientSlug) {
+function getVaultBase(_clientSlug) {
+  // v2 single-user: vault path is global, read from ~/.knowspace/config.json.
+  // Legacy per-slug layout (~/<slug>/workspace/vault) is honored only if the
+  // config file still has a `slug` pinned there.
   let vaultPath;
   try {
     const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
-    if (config.vaultPath && config.slug === clientSlug) {
-      vaultPath = config.vaultPath;
-    }
+    if (config.vaultPath) vaultPath = config.vaultPath;
+    else if (config.slug) vaultPath = path.join(os.homedir(), config.slug, 'workspace', 'vault');
   } catch {
     // config not found or invalid — fall through
   }
   if (!vaultPath) {
-    vaultPath = path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+    vaultPath = path.join(os.homedir(), '.knowspace', 'vault');
   }
   try {
     return fs.realpathSync(vaultPath);
