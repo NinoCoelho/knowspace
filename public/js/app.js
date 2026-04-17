@@ -2223,9 +2223,12 @@ function renderSessionList() {
     const div = document.createElement('div');
     div.className = `session-item ${isActive ? 'active' : ''}`;
     const isProcessing = processingSessions.has(session.key);
+    const agentBadge = session.agentName
+      ? `<span class="agent-pill" title="${escapeHtml(session.providerId || '')}:${escapeHtml(session.agentId || '')}">${escapeHtml(session.agentName)}</span>`
+      : '';
     div.innerHTML = `
       <div class="session-name">${isProcessing ? '<span class="processing-badge" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;animation:pulse-badge 1.2s ease-in-out infinite;vertical-align:middle;"></span>' : ''}${escapeHtml(session.label || 'Untitled')}</div>
-      <div class="session-date">${isProcessing ? '<span style="color:#f59e0b;font-size:10px;">processing...</span>' : formatSessionDate(session.updatedAt)}</div>
+      <div class="session-date" style="display:flex;align-items:center;gap:6px;">${agentBadge}${isProcessing ? '<span style="color:#f59e0b;font-size:10px;">processing...</span>' : formatSessionDate(session.updatedAt)}</div>
       <div class="session-actions">
         <button class="session-action-btn rename-session" title="Rename">
           <i class="fas fa-pen"></i>
