@@ -93,7 +93,39 @@ async function createSession(agentId, opts = {}) {
 
 async function renameSession(sessionKey, label) {
   const state = store.get(sessionKey);
-  if (state) state.label = label;
+  if (state) store.updateLabel(state, label);
+}
+
+/**
+ * Reattach a restored session to a fresh ACP server instance.
+ *
+ * After a server restart, the providerSessionId persisted to disk is
+ * no longer valid in the freshly-spawned ACP process. We try
+ * `loadSession` first (fast, preserves agent context if the agent
+ * supports it), and fall back to `newSession` which loses the agent's
+ * memory of prior turns but keeps Knowspace's chat history visible.
+ */
+async function reattachIfNeeded(state) {
+  if (state.attached) return;
+  const conn = await ensureConnection(state.agentId);
+  const cwd = state.cwd || process.cwd();
+  // Try to resume the original session id (best case: agent persists it)
+  if (conn.init?.agentCapabilities?.loadSession) {
+    try {
+      await conn.conn.loadSession({
+        sessionId: state.providerSessionId,
+        cwd,
+        mcpServers: [],
+      });
+      store.markAttached(state, state.providerSessionId);
+      return;
+    } catch (err) {
+      console.warn(`[acp] loadSession failed for ${state.key}, falling back to newSession: ${err.message}`);
+    }
+  }
+  // Fall back: fresh session id, agent loses prior turn memory
+  const resp = await conn.conn.newSession({ cwd, mcpServers: [] });
+  store.markAttached(state, resp.sessionId);
 }
 
 async function deleteSession(sessionKey) {
@@ -115,6 +147,7 @@ async function loadHistory(sessionKey, _limit) {
 async function sendMessage(sessionKey, text) {
   const state = store.get(sessionKey);
   if (!state) throw new Error(`unknown session: ${sessionKey}`);
+  await reattachIfNeeded(state);
   store.recordUserMessage(state, text);
   store.setPromptInFlight(state, true);
 

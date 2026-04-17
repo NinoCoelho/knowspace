@@ -1,5 +1,6 @@
 /**
- * In-memory store for ACP sessions.
+ * In-memory store for ACP sessions, backed by per-session JSON files
+ * under ~/.knowspace/sessions/acp/.
  *
  * ACP itself is push-based: the agent emits sessionUpdate notifications
  * that arrive while a prompt() call is in flight. Knowspace's existing
@@ -7,12 +8,24 @@
  * after each send. To bridge the two, we accumulate updates into a
  * per-session buffer here, and pollForReply walks the buffer.
  *
- * Sessions do not currently survive a server restart. That's acceptable
- * for v2.0; persistence comes later when ACP's session/list and
- * session/resume are wired through.
+ * Sessions survive a server restart: the message history and metadata
+ * are persisted on every meaningful mutation. Restored sessions are
+ * marked `attached: false` — index.js detects that and creates a fresh
+ * ACP session under the same Knowspace key before the next prompt.
  */
 
+const persistence = require('./persistence');
+
 const sessions = new Map(); // sessionKey -> SessionState
+
+function loadFromDisk() {
+  for (const data of persistence.loadAll()) {
+    sessions.set(data.key, data);
+  }
+}
+
+// Pre-populate from disk on first require.
+loadFromDisk();
 
 function makeSession({ key, providerSessionId, agentId, cwd }) {
   return {
@@ -28,12 +41,20 @@ function makeSession({ key, providerSessionId, agentId, cwd }) {
     promptInFlight: false,
     availableCommands: [],
     lastError: null,
+    attached: true, // false after restore from disk — needs reattach
   };
 }
 
-function add(state) { sessions.set(state.key, state); }
+function add(state) {
+  sessions.set(state.key, state);
+  persistence.save(state);
+}
 function get(key)   { return sessions.get(key); }
-function remove(key){ return sessions.delete(key); }
+function remove(key){
+  const ok = sessions.delete(key);
+  persistence.deleteFor(key);
+  return ok;
+}
 function listForAgent(agentId) {
   return Array.from(sessions.values())
     .filter(s => s.agentId === agentId)
@@ -101,17 +122,32 @@ function recordUserMessage(state, text) {
     content: text,
     timestamp: new Date().toISOString(),
   });
+  persistence.save(state);
 }
 
 function finalizeStreamingMessage(state) {
   // After a turn ends, mark the trailing streaming assistant message as final.
   const last = state.messages[state.messages.length - 1];
-  if (last && last._streaming) delete last._streaming;
+  if (last && last._streaming) {
+    delete last._streaming;
+    persistence.save(state);
+  }
 }
 
 function setPromptInFlight(state, value) {
   state.promptInFlight = value;
   if (!value) state.status = 'idle';
+}
+
+function updateLabel(state, label) {
+  state.label = label;
+  persistence.save(state);
+}
+
+function markAttached(state, providerSessionId) {
+  state.attached = true;
+  if (providerSessionId) state.providerSessionId = providerSessionId;
+  persistence.save(state);
 }
 
 module.exports = {
@@ -122,5 +158,8 @@ module.exports = {
   recordUserMessage,
   finalizeStreamingMessage,
   setPromptInFlight,
+  updateLabel,
+  markAttached,
   _sessionsForTest: sessions,
+  _loadFromDisk: loadFromDisk,
 };
