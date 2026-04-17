@@ -39,26 +39,28 @@ adapters/providers/
 ## Plan (commits)
 
 - [x] Preserve current state on `legacy/openclaw-portal` (pushed to origin)
-- [ ] **Commit A**: POCs + this plan into the branch
-- [ ] **Commit B**: Move `adapters/engine/*` → `adapters/providers/openclaw/*`,
-      update test imports, keep all 49 tests green, behavior unchanged
-- [ ] **Commit C**: Define Provider interface (`adapters/providers/types.js`)
-      and registry (`adapters/providers/index.js`); wrap OpenClaw as a
-      Provider implementation
-- [ ] **Commit D**: Wire `server.js` and `routes/api.js` to use the registry;
-      OpenClaw remains the default; existing API/WebSocket events unchanged
-- [ ] **Commit E**: Implement ACP provider, port POC #1 client, support
-      Claude Code + Hermes + Codex agents through one code path
-- [ ] **Commit F**: Provider+agent config persistence at
-      `~/.knowspace/providers.json` (read-only loader for now; CLI later)
-- [ ] **Commit G**: Replace kanban parser/serializer in `routes/api.js` with
-      POC #2 version; cards expose `id` (stable) and `meta` fields
-- [ ] **Commit H**: New endpoints: `GET /api/providers`, `GET /api/agents`,
-      `POST /api/kanban/dispatch`; the dispatch endpoint creates a session in
-      the target provider, builds the context envelope, sends it as the first
-      prompt, writes session id back into the card's `ks:session` comment
-- [ ] **Commit I**: Final verification — full test suite, smoke test ACP
-      against Claude and Hermes, smoke test OpenClaw still works
+- [x] **Commit A**: POCs + this plan into the branch
+- [x] **Commit B**: Move `adapters/engine/*` → `adapters/providers/openclaw/*`,
+      update test imports, fixed 4 pre-existing chat.test.js failures along
+      the way
+- [x] **Commit C**: Provider interface + registry (`adapters/providers/`)
+- [x] **Commit D**: server.js wired through the registry (back-compat shim
+      keeps existing call sites valid)
+- [x] **Commit E**: ACP provider — Claude Code + Hermes + Codex through one
+      implementation. Smoke test against Claude returns the prompt as
+      expected; Hermes connection path validated (reply latency depends on
+      its locally-configured model)
+- [x] **Commit F**: `~/.knowspace/providers.json` loader — agent recipe
+      overrides for ACP, enabling/disabling providers
+- [x] **Commit G**: `lib/kanban.js` extended parser in production with
+      `<!-- ks:* -->` metadata; cards expose stable id + meta in API
+- [x] **Commit H**: `GET /api/providers`, `GET /api/agents` (with optional
+      `?provider=` filter), `POST /api/kanban/dispatch` (creates session,
+      sends rendered envelope, persists session linkage back to card)
+- [x] **Commit I**: Final verification — 121/121 tests, server boots
+      cleanly, authenticated endpoint smoke confirms payload (OpenClaw
+      enumerates Jhones/Nando/Coury/David/...; ACP enumerates
+      claude-code/hermes/codex)
 
 ## Out of scope (next session)
 
