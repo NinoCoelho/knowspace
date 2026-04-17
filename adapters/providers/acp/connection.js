@@ -17,6 +17,7 @@
 
 const { spawn } = require('node:child_process');
 const { Readable, Writable } = require('node:stream');
+const terminals = require('./terminals');
 
 let _sdkPromise = null;
 function loadSdk() {
@@ -61,11 +62,18 @@ function makeClientHandler({ onSessionUpdate, onPermission, fileOps }) {
       await fs.writeFile(params.path, params.content, 'utf8');
       return null;
     },
-    async createTerminal() { throw new Error('terminal ops not implemented yet'); },
-    async terminalOutput() { throw new Error('terminal ops not implemented yet'); },
-    async releaseTerminal() { return null; },
-    async waitForTerminalExit() { throw new Error('terminal ops not implemented yet'); },
-    async killTerminal() { return null; },
+    async createTerminal(params) {
+      try {
+        return terminals.create(params);
+      } catch (err) {
+        console.error('[acp] createTerminal failed:', err.message);
+        throw err;
+      }
+    },
+    async terminalOutput(params)     { return terminals.output(params); },
+    async releaseTerminal(params)    { return terminals.release(params); },
+    async waitForTerminalExit(params) { return terminals.waitForExit(params); },
+    async killTerminal(params)       { return terminals.kill(params); },
   };
 }
 
@@ -91,7 +99,7 @@ async function spawnAndConnect(recipe, hooks) {
     protocolVersion: sdk.PROTOCOL_VERSION,
     clientCapabilities: {
       fs: { readTextFile: true, writeTextFile: true },
-      terminal: false,
+      terminal: true,
     },
     clientInfo: { name: 'knowspace', version: '2.0.0' },
   });

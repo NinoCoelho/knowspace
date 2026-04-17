@@ -254,12 +254,13 @@ async function health() {
 const provider = {
   id: 'acp',
   capabilities: {
-    persistentSessions: true,  // within a server lifetime
+    persistentSessions: true,  // survive server restart via lib/persistence
     streaming: 'native',
     toolUse: true,
     fileAttachments: false,    // not wired through yet
     cwdBinding: true,
     multiAgent: true,
+    terminal: true,
   },
   listAgents,
   listSessions,
