@@ -2480,7 +2480,10 @@ function linkifyFilePaths(root) {
     acceptNode(n) {
       const p = n.parentElement;
       if (!p) return NodeFilter.FILTER_REJECT;
-      if (p.closest('a, .file-path-link, code, pre, script, style')) {
+      // Skip inside anchors (already linked), code BLOCKS (pre), and
+      // script/style. Inline <code> is OK — that's where most agents
+      // wrap paths and it's exactly where we want pills.
+      if (p.closest('a, .file-path-link, pre, script, style')) {
         return NodeFilter.FILTER_REJECT;
       }
       // Cheap pre-filter: must contain a "/" or "~/" to be worth checking.
