@@ -2279,20 +2279,44 @@ newSessionBtn.addEventListener('click', () => {
 
 const newSessionWithAgentBtn = document.getElementById('newSessionWithAgentBtn');
 const agentPickerMenu = document.getElementById('agentPickerMenu');
+// Move the menu to <body> so any ancestor with `transform` / `filter`
+// (Tailwind utilities, etc.) doesn't trap our position:fixed inside it.
+if (agentPickerMenu && agentPickerMenu.parentElement !== document.body) {
+  document.body.appendChild(agentPickerMenu);
+}
+
+function positionAgentPicker() {
+  if (!agentPickerMenu || !newSessionWithAgentBtn) return;
+  const r = newSessionWithAgentBtn.getBoundingClientRect();
+  // Anchor below the button, right-aligned to the button's right edge.
+  // Then nudge left if it would overflow the right viewport edge.
+  const menuWidth = Math.min(360, Math.max(280, agentPickerMenu.offsetWidth || 280));
+  let left = r.right - menuWidth;
+  if (left < 8) left = 8;
+  if (left + menuWidth > window.innerWidth - 8) left = window.innerWidth - menuWidth - 8;
+  agentPickerMenu.style.left = left + 'px';
+  agentPickerMenu.style.top  = (r.bottom + 4) + 'px';
+}
 
 async function openAgentPicker() {
   if (!agentPickerMenu) return;
   agentPickerMenu.innerHTML = '<div class="text-sm text-gray-500 p-3">Loading agents…</div>';
   agentPickerMenu.classList.remove('hidden');
+  positionAgentPicker();
   try {
     const res = await fetch(`/api/agents?token=${token}${asParam()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderAgentPicker(data.agents || []);
+    positionAgentPicker(); // re-measure after content lands
   } catch (err) {
     agentPickerMenu.innerHTML = `<div class="text-sm text-red-500 p-3">${escapeHtml(err.message)}</div>`;
   }
 }
+
+window.addEventListener('resize', () => {
+  if (agentPickerMenu && !agentPickerMenu.classList.contains('hidden')) positionAgentPicker();
+});
 
 function renderAgentPicker(agents) {
   const grouped = {};

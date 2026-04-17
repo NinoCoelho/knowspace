@@ -8,7 +8,7 @@ const paths = require('./paths');
 
 let _rpc = null;
 function rpc(...args) {
-  if (!_rpc) _rpc = require('../../lib/gateway').gatewayRpc;
+  if (!_rpc) _rpc = require('../../../lib/gateway').gatewayRpc;
   return _rpc(...args);
 }
 
