@@ -1,89 +1,91 @@
 # Contributing to Knowspace
 
-Thanks for your interest! Knowspace is the web portal sidecar for [OpenClaw](https://github.com/openclaw/openclaw), and we welcome contributions from the community.
+Thanks for your interest! Knowspace is a multi-provider portal that drives [OpenClaw](https://github.com/openclaw/openclaw), [Claude Code](https://www.anthropic.com/claude-code), [Hermes](https://github.com/nousresearch/hermes-agent), and [Codex](https://github.com/openai/codex) — and we welcome contributions from any of those communities.
 
 ## Quick Start
 
-1. Fork the repository
-2. Clone your fork and install dependencies:
-   ```bash
-   git clone https://github.com/<your-username>/knowspace.git
-   cd knowspace
-   npm install
-   ```
-3. Create a feature branch:
-   ```bash
-   git checkout -b feature/my-feature
-   ```
-4. Make your changes
-5. Run tests:
-   ```bash
-   npm test
-   ```
-6. Push and open a pull request
-
-## Development Setup
-
-You need:
-- Node.js 22+
-- An OpenClaw instance running locally (for manual testing)
-
-Start the dev server:
 ```bash
-npm start
+git clone https://github.com/<your-username>/knowspace.git
+cd knowspace
+npm install
+npm test                      # ~180 tests, no live agent needed
+npm start                     # http://localhost:3445
 ```
 
-The portal runs at `http://localhost:3445`.
+You don't need every provider to develop — pick what you have:
+- **No backend at all** is enough for unit tests, parser work, frontend changes
+- **OpenClaw gateway running** unlocks chat against existing OpenClaw agents
+- **`claude` CLI authenticated** unlocks Claude Code via ACP (`npx @agentclientprotocol/claude-agent-acp` is bundled)
+- **`hermes` / `codex` in PATH** unlocks those ACP recipes
 
-## Architecture
+## Architecture in one paragraph
 
-Knowspace is a **sidecar** to OpenClaw. The critical rule:
+`server.js` accepts WebSocket + REST traffic, delegates every chat / session call to the **provider registry** (`adapters/providers/`). Two providers ship: `openclaw` (WebSocket gateway) and `acp` (JSON-RPC stdio for Claude Code, Hermes, Codex). `lib/session-router` maps a session-key prefix to the right provider, so the chat loop is provider-agnostic. Kanban dispatch goes through `lib/envelope` (renders the markdown context) and writes a `<!-- ks:session ... -->` linkage back into the card's markdown.
 
-> `server.js` **never** imports `lib/gateway.js` directly. All engine interaction goes through `adapters/engine/`.
+### Key invariants
 
-This adapter layer isolates all OpenClaw coupling to one place. If you're adding features that talk to the engine, add your logic in `adapters/engine/` and call it from `server.js` or `routes/api.js`.
+> `server.js` never imports `lib/gateway.js` directly. All OpenClaw interaction lives in `adapters/providers/openclaw/`. New code paths route through `lib/session-router` or `providers.getProvider(id)` — never hardcode a provider.
 
 ### Key paths
 
 | Path | Purpose |
 |------|---------|
 | `server.js` | Express + Socket.IO server |
-| `adapters/engine/` | Engine adapter layer (all OpenClaw interaction lives here) |
-| `lib/gateway.js` | Low-level WebSocket RPC client |
-| `middleware/auth.js` | Token authentication |
-| `routes/api.js` | REST API endpoints (vault, kanban, graph) |
-| `public/index.html` | SPA entry point + all CSS |
-| `public/js/app.js` | Frontend (vanilla JS, no framework) |
-| `cli/` | CLI commands |
-| `tests/adapters/` | 49 contract tests (node:test, no gateway needed) |
+| `adapters/providers/types.js` | Provider interface (JSDoc contract) |
+| `adapters/providers/index.js` | Registry, applies `~/.knowspace/providers.json` |
+| `adapters/providers/openclaw/` | OpenClaw provider |
+| `adapters/providers/acp/` | ACP provider — connection / store / persistence / terminals / probe |
+| `lib/gateway.js` | Low-level WebSocket RPC (Ed25519, OpenClaw only) |
+| `lib/kanban.js` | Markdown parser/serializer with `ks:*` metadata |
+| `lib/envelope.js` | Renders dispatch context envelope as markdown |
+| `lib/session-router.js` | Session-key → provider routing |
+| `lib/permission-broker.js` | ACP `requestPermission` → WebSocket modal |
+| `lib/file-resolver.js` | Multi-strategy file path resolution |
+| `middleware/auth.js` | Token authentication (SHA-256 hashed) |
+| `routes/api.js` | REST: vault, kanban, dispatch, providers, agents, file preview/raw |
+| `public/index.html` | SPA entry + all CSS |
+| `public/js/app.js` | Frontend (vanilla JS, no framework, no build) |
+| `cli/` | `serve`, `connect`, `configure`, `daemon`, `tokens`, `providers`, `agents` |
+| `tests/` | ~180 unit + contract tests (node:test) |
 
-## Coding Conventions
+## Coding conventions
 
 - **Backend:** Node.js, Express, Socket.IO. No TypeScript.
 - **Frontend:** Vanilla JS in `public/js/app.js`. No framework, no build step.
-- **CSS:** All in `public/index.html` using CSS custom properties for theming.
-- **Tests:** Use `node:test` (Node.js built-in). Mock the gateway RPC via `_setRpc()` — no live gateway needed.
-- **Style:** Match the surrounding code. Keep it simple.
-- **Commits:** Clear, concise messages explaining *why*, not *what*.
+- **CSS:** Inline in `public/index.html` using CSS custom properties for theming.
+- **Tests:** `node:test`. Provider tests inject mocks via `_setRpc()` / `_setSocketProvider()` etc — no live backend required.
+- **Style:** Match surrounding code. Keep it simple. Don't add error handling for impossible scenarios.
+- **Comments:** Default to none. Add one only when the *why* is non-obvious (a workaround, a constraint, a past incident). Don't restate what the code does.
+- **Commits:** Explain *why*, not *what*. Squash noise before opening a PR.
 
-## Pull Requests
+## Testing
 
-- Keep PRs focused — one feature or fix per PR.
-- Include a clear description of what changed and why.
+```bash
+npm test                                     # full suite
+node scripts/smoke-acp.js claude-code "hi"   # end-to-end ACP smoke against a real agent
+node scripts/smoke-acp-restart.js            # exercises persistence + reattach
+```
+
+When adding a feature that crosses providers, run both smokes if you can.
+
+## Pull requests
+
+- One feature/fix per PR. Easier to review, easier to revert.
 - Run `npm test` before pushing.
-- If your change affects the adapter layer, add or update tests in `tests/adapters/`.
+- New behavior → new test. Bug fix → regression test.
+- If your change touches the kanban markdown format or the envelope contract, update the tests in `tests/lib/`.
+- Note in the description if you tested against a specific provider end-to-end.
 
-## Areas Where We'd Love Help
+## Areas where we'd love help
 
-These are great starting points if you want to contribute:
-
-- **Frontend improvements** — accessibility, responsive/mobile layout, i18n
-- **Vault renderers** — PDF viewer, CSV/TSV table rendering, code notebook support
-- **Integrations** — calendar, email, project management tools (Notion, Linear, etc.)
-- **Testing** — more adapter tests, frontend E2E tests, CI setup
-- **Documentation** — setup guides, video tutorials, architecture deep-dives
-- **Daemon improvements** — Windows support (Windows Service), process monitoring
+- **Provider health view** — surface `listAgentsWithAvailability()` results in the UI
+- **Vault renderers** — PDF, CSV/TSV, code notebooks
+- **Mobile layout** — kanban especially
+- **More ACP recipes** — Gemini CLI, anything new the spec brings
+- **Real auth** — OAuth, magic-link, or device-flow for shared deployments
+- **CI** — smoke pipelines, GitHub Actions
+- **Docs** — setup guides, architecture deep-dives, video walkthroughs
 
 ## Questions?
 
-Open an issue with the `question` label, or start a Discussion on the repo. We respond quickly.
+Open an issue with the `question` label, or start a Discussion. We respond quickly.

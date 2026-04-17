@@ -5,37 +5,40 @@
 <h1 align="center">Knowspace</h1>
 
 <p align="center">
-  <strong>The web portal for your AI agents.</strong>
+  <strong>The web portal for your AI agents — any agent, in one tab.</strong>
 </p>
 
 <p align="center">
-  Chat, files, and tasks — all in one browser tab. Built as a sidecar for
-  <a href="https://github.com/openclaw/openclaw">OpenClaw</a>.
+  Chat, files, kanban, and a dispatch flow that turns cards into agent
+  sessions. Talks to <a href="https://github.com/openclaw/openclaw">OpenClaw</a>,
+  <a href="https://www.anthropic.com/claude-code">Claude Code</a>,
+  <a href="https://github.com/nousresearch/hermes-agent">Hermes</a>, and
+  <a href="https://github.com/openai/codex">Codex</a> via the
+  <a href="https://agentclientprotocol.com/">Agent Client Protocol</a>.
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> &middot;
+  <a href="#why-knowspace">Why</a> &middot;
   <a href="#screenshots">Screenshots</a> &middot;
+  <a href="#features">Features</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#contributing">Contributing</a> &middot;
-  <a href="#license">License</a>
+  <a href="#architecture">Architecture</a> &middot;
+  <a href="#contributing">Contributing</a>
 </p>
 
 ---
 
 ## Why Knowspace?
 
-You already talk to your AI agent in a terminal. Your clients shouldn't have to.
+You already drive coding agents from a terminal. Your work — briefs, drafts, designs, releases — happens on a kanban. Knowspace closes the gap: drop a card into a lane, the right agent picks it up, and replies stream back inside the card. No tab switching, no copy-pasting context.
 
-Knowspace gives every OpenClaw agent a clean, professional web interface — no Docker, no database, no infrastructure to manage. Spin it up next to your existing OpenClaw installation and your clients get:
+- **Multi-provider, single tab.** Chat with OpenClaw agents (Jhones, Nando, …) and ACP agents (Claude Code, Hermes, Codex) from the same sidebar.
+- **Kanban that ships work.** Cards live as plain markdown (Obsidian-compatible). A lane can have a default agent + instructions; drop a card and it dispatches.
+- **Handoff that keeps context.** Each session is recorded on the card. Re-dispatching includes an excerpt of the previous agent's turn so the next one picks up where it left off.
+- **Vault-aware previews.** File paths in agent replies become clickable pills with inline preview, image rendering, and one-click download.
+- **Single user, real auth.** Token via login form (no secrets in URLs after the first onboarding link). One vault, no multi-tenant ceremony.
 
-- **Real-time chat** with the agent, with full history and file attachments
-- **A file vault** to browse, read, and search agent workspace files
-- **A Kanban board** to track tasks — stored as plain markdown, compatible with Obsidian
-- **A knowledge graph** that visualizes how vault files connect
-- **Multi-client support** — onboard new clients with a single command, each with their own workspace and access token
-
-One process. One port. Zero dependencies beyond Node.js and OpenClaw.
+One Node process. One port. Zero database.
 
 ---
 
@@ -43,27 +46,27 @@ One process. One port. Zero dependencies beyond Node.js and OpenClaw.
 
 <table>
   <tr>
-    <td align="center"><b>Chat</b></td>
-    <td align="center"><b>Home</b></td>
+    <td align="center"><b>Kanban with linked agent sessions</b></td>
+    <td align="center"><b>Dispatch a card to an agent</b></td>
   </tr>
   <tr>
-    <td><img src="docs/chat.png" alt="Chat view" width="480" /></td>
-    <td><img src="docs/home.png" alt="Home view" width="480" /></td>
+    <td><img src="docs/card-chat.png" alt="Card chat tab streaming an agent response with clickable file pills" width="480" /></td>
+    <td><img src="docs/dispatch.png" alt="Dispatch modal — pick agent, target lane, additional instructions" width="480" /></td>
   </tr>
   <tr>
+    <td align="center"><b>Lane settings (agent + auto-dispatch)</b></td>
     <td align="center"><b>Vault</b></td>
-    <td align="center"><b>Kanban Board</b></td>
   </tr>
   <tr>
+    <td><img src="docs/lane-settings.png" alt="Lane settings — default agent, default instructions, auto-dispatch on drop" width="480" /></td>
     <td><img src="docs/vault.png" alt="Vault view" width="480" /></td>
-    <td><img src="docs/vault-kanban.png" alt="Kanban board" width="480" /></td>
   </tr>
   <tr>
-    <td align="center"><b>Kanban Quick Actions</b></td>
-    <td align="center"><b>Mermaid Diagrams</b></td>
+    <td align="center"><b>Chat sidebar</b></td>
+    <td align="center"><b>Mermaid in vault</b></td>
   </tr>
   <tr>
-    <td><img src="docs/vault-kanban-quick-action.png" alt="Kanban quick actions" width="480" /></td>
+    <td><img src="docs/chat.png" alt="Sidebar chat" width="480" /></td>
     <td><img src="docs/vault-mermaid.png" alt="Mermaid diagrams in vault" width="480" /></td>
   </tr>
 </table>
@@ -72,48 +75,38 @@ One process. One port. Zero dependencies beyond Node.js and OpenClaw.
 
 ## Features
 
-### Chat
+### Multi-provider chat
 
-- Real-time conversation with your OpenClaw agent via WebSocket
-- Full message history, preserved across sessions
-- File attachments — send documents and images to the agent
-- Streaming replies with live tool activity display
-- Actionable message buttons (retry, branch, edit)
-- Split view — chat alongside vault or kanban
-- Multiline input with Shift+Enter
+- **Two backends, one UX.** OpenClaw via WebSocket gateway; Claude Code, Hermes, Codex (and any future ACP agent) via [Agent Client Protocol](https://agentclientprotocol.com/) over stdio.
+- **Auto-detect on install.** The portal probes `which hermes` / `which codex` / `npx claude-agent-acp` and only lists agents you actually have.
+- **Sidebar agent picker.** "+ ▾" next to "New chat" opens a dropdown grouped by provider. Coder agents prompt for a working directory.
+- **Persistent ACP sessions.** Sessions survive a server restart; on the next message we silently `loadSession` (or fall back to a fresh one) so the user keeps their history.
+- **Permission requests bubble to the UI.** When an ACP agent calls `requestPermission`, a themed modal lets you allow / reject. No UI connected → falls back to the YOLO default so unattended runs don't deadlock.
+- **Terminal ops for coder agents.** Claude Code can actually run shell commands; output is buffered with a 1 MB cap.
 
-### Vault
+### Kanban as a dispatch surface
 
-- Browse the agent workspace as a file tree
-- Render markdown with syntax highlighting and Mermaid diagrams
-- Fuzzy search across all vault files
-- Smart inline previews for vault links in chat
-- Upload, create, edit, and delete files
-- Auto-refresh after agent creates new files
+- **Cards are markdown.** Edit them in Knowspace or directly in Obsidian. v2 adds invisible `<!-- ks:* -->` HTML comments for stable IDs and metadata.
+- **Click a card → modal.** Edit / Chat tabs. The Chat tab follows the dispatched session — agent replies stream in live.
+- **Dispatch a card.** Right-click → "Dispatch to agent…" → pick an agent, pick a target lane (optional), add free-form instructions, fire. The card moves, an envelope is sent, the chat tab opens to the new session.
+- **Lane-level automation.** ⚙ on a lane: set a default agent + default instructions + an auto-dispatch toggle. Drop a card into the lane → either it dispatches immediately (if armed) or pre-fills the dispatch modal.
+- **Handoff carries context.** Re-dispatching a card includes the last 8 turns from the previous session as `## Previous conversation (excerpt)` in the envelope, plus a `from=<sessionKey>` provenance comment.
+- **Card meta on the board.** Pills under each card show `acp:claude-code` (assignee) + `running · 2 sessions` (latest dispatch state).
+- **Cards have a max height.** Long bodies scroll inside the card so lanes stay scannable.
 
-### Kanban
+### Vault + file previews
 
-- Drag-and-drop task board
-- Cards stored as Obsidian-compatible markdown files
-- AI quick actions on cards — summarize, break down, generate subtasks
-- Per-card chat tab for contextual AI conversations
-- Multiple boards per client
+- **Browse the agent workspace.** File tree, fuzzy search, markdown rendering with Mermaid + KaTeX + syntax highlighting.
+- **File-path linkifier.** Any absolute or `~/` path in agent replies (chat sidebar, card chat, vault preview) becomes a `📄 basename` pill.
+- **Click a pill → preview modal.** Markdown renders rich, text-y formats render `<pre>`, images render inline, binaries get a "open it locally" hint.
+- **Smart resolver.** Five strategies in order: absolute → tilde → vault-rooted (`/Briefs/foo.md` interpreted as `<vault>/Briefs/foo.md`) → vault-relative → unique-basename fuzzy match. The modal tooltip shows which one resolved.
+- **Download button.** Modal footer has copy-path + download buttons. Backend serves with proper Content-Type + `Content-Disposition`.
 
-### Knowledge Graph
+### Auth + portal
 
-- Force-directed graph of vault file connections
-- Folder color coding and folder filter
-- Zoom, pan, and hover details
-- Orphan node toggle and text filter
-
-### Portal
-
-- Command palette (Ctrl+K) for quick navigation
-- Dark and light themes
-- Keyboard shortcuts for all major actions
-- Token-based authentication with per-client access
-- Session management — create, rename, and delete conversations
-- Background daemon mode with auto-start on login
+- **Login form, not URLs.** Token in a password input, POSTed to `/auth`. The legacy `/auth?token=…` link still works for first-boot onboarding, with `Cache-Control: no-store`.
+- **Cookie-based session.** SameSite=Lax, 1-year max age, hashed token storage (SHA-256).
+- **Command palette (Cmd/Ctrl+K), dark mode, keyboard shortcuts, daemon mode** with auto-start on login (launchd / systemd --user).
 
 ---
 
@@ -121,8 +114,12 @@ One process. One port. Zero dependencies beyond Node.js and OpenClaw.
 
 ### Requirements
 
-- Node.js 22+
-- [OpenClaw](https://github.com/openclaw/openclaw) installed and running
+- **Node.js 22+**
+- **At least one agent backend.** Pick any combination:
+  - [OpenClaw](https://github.com/openclaw/openclaw) running locally (gateway at `ws://127.0.0.1:18789`)
+  - [Claude Code](https://www.anthropic.com/claude-code) (`npx @agentclientprotocol/claude-agent-acp` is bundled by Knowspace; just have `claude` authenticated)
+  - [Hermes](https://github.com/nousresearch/hermes-agent) (`hermes acp` in PATH)
+  - [Codex CLI](https://github.com/openai/codex) (`codex acp` in PATH; `codex login` first)
 
 ### Install
 
@@ -133,163 +130,162 @@ npm install
 npm link          # makes 'knowspace' available globally
 ```
 
-### Connect to OpenClaw
-
-```bash
-knowspace connect
-```
-
-Detects your OpenClaw gateway, saves the connection, and installs the onboard skill.
-
-### Configure
+### Configure (interactive)
 
 ```bash
 knowspace configure
 ```
 
-Interactive wizard on first run — sets the gateway URL, configures your vault path, and generates the first access token.
+First run: 3-step wizard — OpenClaw gateway (optional), vault path (defaults to `~/.knowspace/vault`), public URL + first access token.
 
 ### Start
 
 ```bash
 knowspace serve              # default port 3445
-knowspace serve --port 4000
+knowspace daemon install     # auto-start on login (macOS launchd / Linux systemd --user)
 ```
 
-Or install as a background daemon (auto-starts on login):
-
-```bash
-knowspace daemon install
-```
-
-Open the printed URL in your browser. Done.
+Open the printed URL. Sign in with your token.
 
 ---
 
 ## CLI Reference
 
 ```bash
-knowspace connect              # configure gateway + install onboard skill
-knowspace configure            # interactive setup wizard / menu
-knowspace configure --reset    # force wizard again
-knowspace serve                # start the portal (default port 3445)
-knowspace serve --port 4000
-knowspace daemon install       # write service file, enable auto-start, start now
-knowspace daemon uninstall     # stop and remove service file
-knowspace daemon start
-knowspace daemon stop
-knowspace daemon restart
-knowspace daemon status
-knowspace daemon logs          # tail -f ~/.knowspace/knowspace.log
-knowspace daemon logs --error  # tail -f ~/.knowspace/knowspace.error.log
-knowspace tokens list
-knowspace tokens generate <slug>
-knowspace tokens rotate <slug>
+knowspace serve [--port N]            Start the portal
+knowspace connect                     Configure the OpenClaw gateway (optional)
+knowspace configure [--reset]         Interactive setup wizard / menu
+
+knowspace daemon install              Install + start as background service
+knowspace daemon uninstall            Stop and remove
+knowspace daemon start|stop|restart   Control
+knowspace daemon status               Print status + PID
+knowspace daemon logs [--error]       Tail logs
+
+knowspace tokens info                 Show the current token's status
+knowspace tokens generate             Generate a new access token
+knowspace tokens rotate               Rotate the existing token
+
+knowspace providers list              Show registered providers + status
+knowspace providers enable|disable    Toggle a provider in providers.json
+knowspace providers path              Print providers.json location
+
+knowspace agents list [--provider id] List agents (auto-detected, hides missing binaries)
+knowspace agents add <id> --cmd <bin> Register a new ACP agent
+   [--name --kind --args --cwd --description]
+knowspace agents remove <id>          Remove an ACP agent override
+knowspace agents show <id>            Print resolved recipe (overrides + builtin)
 ```
-
-Daemon backend: `launchd` on macOS, `systemd --user` on Linux.
-
----
-
-## Multi-Client & Onboarding
-
-Knowspace supports multiple clients, each with their own workspace and access token.
-
-**Main client** — configured manually via `knowspace configure`. The vault can point to any directory (iCloud, Obsidian vault, etc.).
-
-**Onboarded clients** — created by the agent via the `knowspace-onboard` skill. To add a new client, just ask your agent:
-
-> "Onboard a new client, slug: acme-corp"
-
-The agent creates the workspace, registers with OpenClaw, generates an access token, and returns the login link.
 
 ---
 
 ## Architecture
 
 ```
-Browser → Knowspace Portal → Adapter Layer → OpenClaw Gateway
+Browser → Knowspace Portal → Provider Registry ┬─ openclaw  → WebSocket gateway → OpenClaw
+                                                └─ acp       → JSON-RPC stdio   → Claude Code / Hermes / Codex
 ```
 
-Knowspace is a sidecar. It adds a product layer (web UI, CLI, auth, vault, kanban) without modifying OpenClaw. All engine interaction is isolated to the adapter layer (`adapters/engine/`).
-
-**Stack:** Node.js, Express, Socket.IO, vanilla JS, filesystem. No database.
+Two providers, one chat loop. The `lib/session-router` maps a session key prefix (`agent:` → openclaw, `acp:` → acp) to its owning provider, so every chat operation, dispatch, and history fetch routes transparently.
 
 ```
-server.js                    Express + Socket.IO server
-adapters/engine/             Engine adapter layer (barrier between Knowspace and OpenClaw)
-  index.js                     Barrel export
-  paths.js                     Engine path conventions, session key formats
-  messages.js                  Message normalization, filtering, status detection
-  sessions.js                  Session CRUD via gateway RPC
-  chat.js                      Chat: history, send, streaming poll
-lib/gateway.js               Low-level WebSocket RPC client (Ed25519 device auth)
-middleware/auth.js            Token authentication (SHA-256 hashed)
-routes/api.js                 REST API: vault, kanban, graph
+server.js                       Express + Socket.IO server
+adapters/providers/             Provider abstraction (multi-backend)
+  types.js                        Provider interface (JSDoc contract)
+  index.js                        Registry: getProvider / listProviders
+  config.js                       Loads ~/.knowspace/providers.json
+  openclaw/                       OpenClaw provider (WebSocket gateway)
+    paths.js, messages.js, sessions.js, chat.js, index.js
+  acp/                            ACP provider (Claude Code, Hermes, Codex, …)
+    agents.js                     Built-in recipes
+    connection.js                 Spawned subprocess + ACP connection lifecycle
+    session-store.js              In-memory buffer (push → poll bridge) + reverse index
+    persistence.js                Per-session JSON files under ~/.knowspace/sessions/acp/
+    terminals.js                  ACP terminal ops (createTerminal/output/wait/kill)
+    probe.js                      Availability check + 5-min cache
+    index.js                      Provider implementation
+lib/
+  gateway.js                      Low-level WebSocket RPC (Ed25519 device auth, OpenClaw only)
+  kanban.js                       Markdown parser/serializer with ks:* metadata
+  envelope.js                     Renders the dispatch context envelope as markdown
+  session-router.js               Session-key prefix → owning provider
+  permission-broker.js            ACP requestPermission → WebSocket → modal
+  file-resolver.js                Multi-strategy path resolution (vault-rooted, fuzzy, …)
+middleware/auth.js                Token auth (SHA-256 hashed)
+routes/api.js                     REST: vault, kanban, dispatch, providers, agents, file preview/raw
 public/
-  index.html                   SPA entry point + all CSS
-  js/app.js                    Frontend (vanilla JS, no framework)
-bin/knowspace.js             CLI entry point
-cli/                         CLI commands (connect, configure, daemon, serve, tokens)
-skills/
-  knowspace-onboard/           Agent skill: onboards portal clients
-templates/                   Workspace markdown templates
-tests/adapters/              49 contract tests (node:test, no gateway needed)
+  index.html                      SPA entry + all CSS
+  js/app.js                       Frontend (vanilla JS, no framework)
+bin/knowspace.js                  CLI entry
+cli/                              CLI commands (serve, connect, configure, daemon, tokens, providers, agents)
+tests/                            ~180 unit + contract tests (node:test, no live agents needed)
 ```
 
-**Rule:** `server.js` never imports `lib/gateway.js` directly. All engine calls go through `adapters/engine/`.
+**Key invariants:**
+- `server.js` never imports `lib/gateway.js` directly — all OpenClaw interaction goes through `adapters/providers/openclaw/`.
+- `server.js` and `routes/api.js` route session operations through `lib/session-router` or the provider registry — never hardcode a provider for new code paths.
+- Single user. Token still flows through `req.clientSlug` internally for compatibility, but the CLI and UX never expose it.
+
+**Stack:** Node.js + Express + Socket.IO + vanilla JS + filesystem. No database. No build step.
 
 ---
 
-## Environment Variables
+## Configuration files
 
-Set in shell or `~/.knowspace/.env`:
+| File | Purpose |
+|------|---------|
+| `~/.knowspace/config.json` | Vault path, public base URL, OpenClaw gateway pointer |
+| `~/.knowspace/providers.json` | Provider on/off + ACP agent overrides |
+| `~/.knowspace/sessions/acp/*.json` | Persisted ACP session state |
+| `~/.knowspace/.env` | Environment variables loaded at start |
+| `.tokens.json` (repo dir) | SHA-256 hashed access token |
+| `.device-keys.json` (repo dir) | Ed25519 keypair for OpenClaw gateway auth |
+
+## Environment variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KNOWSPACE_GATEWAY_URL` | WebSocket URL of the OpenClaw gateway | `ws://127.0.0.1:18789` |
-| `KNOWSPACE_GATEWAY_TOKEN` | Gateway auth token | read from `openclaw.json` |
 | `KNOWSPACE_PORT` | Portal port | `3445` |
 | `KNOWSPACE_BASE_URL` | Public URL (used in token links) | `http://localhost:<port>` |
-| `KNOWSPACE_ADMIN_SLUG` | Slug for the first-boot auto-generated token | `main` |
-| `KNOWSPACE_TOKENS_FILE` | Path to the tokens file | `.tokens.json` |
+| `KNOWSPACE_GATEWAY_URL` | OpenClaw gateway WebSocket URL | `ws://127.0.0.1:18789` |
+| `KNOWSPACE_GATEWAY_TOKEN` | OpenClaw gateway auth token | read from `~/.openclaw/openclaw.json` |
+| `KNOWSPACE_TOKENS_FILE` | Tokens file path | `.tokens.json` |
+| `KNOWSPACE_PROVIDERS_FILE` | Provider config file | `~/.knowspace/providers.json` |
+| `KNOWSPACE_ACP_SESSIONS_DIR` | ACP session persistence dir | `~/.knowspace/sessions/acp` |
+| `KNOWSPACE_ACP_DEBUG` | When truthy, log every ACP `sessionUpdate` to stderr | unset |
+| `KNOWSPACE_ADMIN_SLUG` | Internal slug used by the auth layer (single-user default) | `main` |
 
 ---
 
 ## Roadmap
 
-What's next for Knowspace:
-
 **Soon**
 - Mobile-responsive layout
-- PDF and CSV renderers in the vault
-- Notification system (agent finished a task, new file created)
-- Multi-language support (i18n)
+- PDF / CSV renderers in the vault preview modal
+- Notification when an agent finishes a long-running dispatched task
+- Provider health view in the UI (probe results, last-error per agent)
 
 **Later**
-- Plugin system for custom vault renderers and integrations
-- Collaborative editing (real-time multi-user vault)
-- Windows daemon support (Windows Service)
-- Admin dashboard (usage stats, client management)
-- API for third-party integrations
+- More ACP-compatible agents as they ship (Gemini CLI is wired, just not auto-listed)
+- Plugin system for custom vault renderers and provider implementations
+- Windows daemon (Windows Service)
+- Real auth (OAuth, magic-link) for shared deployments
 
-Have an idea? Open an issue with the `enhancement` label.
+Have an idea? Open an issue with `enhancement`.
 
 ---
 
 ## Contributing
 
-Knowspace is open source and we welcome contributions from the OpenClaw community. See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
+Knowspace is open source and contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Good areas for first contributions:**
+**Good first contributions:**
+- Add a probe heuristic for a new ACP agent
+- Vault renderers (PDF, CSV)
+- Mobile layout pass on the kanban
+- More tests on the dispatch / handoff flow
 
-- Frontend improvements (accessibility, responsive design)
-- New vault renderers (PDF, CSV/TSV tables, code notebooks)
-- Integrations (calendar, email, project management tools)
-- Testing and CI/CD
-- Documentation and examples
-
-Quick start: fork, branch, `npm test`, PR. We respond quickly.
+Quick start: fork → branch → `npm test` → PR.
 
 ---
 
