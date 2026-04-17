@@ -7,10 +7,12 @@
  */
 
 const openclaw = require('./openclaw');
+const acp = require('./acp');
 
 /** @type {Map<string, import('./types').Provider>} */
 const providers = new Map();
 providers.set(openclaw.provider.id, openclaw.provider);
+providers.set(acp.provider.id, acp.provider);
 
 const DEFAULT_PROVIDER_ID = 'openclaw';
 
