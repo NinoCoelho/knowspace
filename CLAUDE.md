@@ -11,8 +11,7 @@ Single-user model: one Knowspace instance per user. Token auth blocks visitors b
 ## CLI Commands
 
 ```bash
-knowspace connect              # configure the OpenClaw gateway link
-knowspace configure            # interactive setup wizard / menu
+knowspace configure            # interactive setup wizard / menu (gateway, vault, token)
 knowspace configure --reset    # force wizard again
 knowspace serve                # start the portal (default port 3445)
 knowspace serve --port 4000
