@@ -191,39 +191,109 @@ app.use(cookieParser());
 app.get('/LICENSE', (_, res) => res.sendFile(path.join(__dirname, 'LICENSE')));
 app.get('/TERMS.md', (_, res) => res.sendFile(path.join(__dirname, 'TERMS.md')));
 
+// Guard the SPA entry point — if the visitor has no valid session
+// cookie, route them to the login form instead of serving index.html
+// (which would just fail on API calls anyway).
+app.get(['/', '/index.html'], (req, res, next) => {
+  const token = req.cookies && req.cookies.auth_token;
+  if (token && authManager.validateToken(token)) return next();
+  res.set('Cache-Control', 'no-store');
+  return res.redirect('/login');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Token authentication route - validates token in URL and sets cookie
-app.get('/auth', (req, res) => {
-  const token = req.query.token;
-
-  if (!token) {
-    return res.status(400).send('Token required');
+// GET /auth?token=... — legacy onboarding link flow. Kept so the
+// first-boot admin URL and shareable links keep working. The token is
+// consumed once, a cookie is set, and the browser is redirected to /
+// stripping the query string. Cache-Control is no-store so no proxy or
+// browser caches the sensitive URL.
+// POST /auth — form submission from the login page. Same validation,
+// same cookie, but the token never appears in a URL.
+function acceptAuthToken(req, res, token) {
+  res.set('Cache-Control', 'no-store');
+  if (!token || typeof token !== 'string') {
+    return { ok: false, status: 400, body: 'Token required' };
   }
-
   const clientSlug = authManager.validateToken(token);
-
   if (!clientSlug) {
-    return res.status(403).send('Invalid token');
+    return { ok: false, status: 403, body: 'Invalid token' };
   }
-
-  // Set secure httpOnly cookie
   const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
   res.cookie('auth_token', token, {
     httpOnly: false, // Allow JavaScript to access for Socket.IO
     secure: isSecure,
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
-    sameSite: 'lax'
+    sameSite: 'lax',
   });
+  return { ok: true, clientSlug };
+}
 
-  // Redirect to home page without token in URL
+app.get('/auth', (req, res) => {
+  const result = acceptAuthToken(req, res, req.query.token);
+  if (!result.ok) return res.status(result.status).send(result.body);
   res.redirect('/');
+});
+
+app.post('/auth', express.urlencoded({ extended: false }), (req, res) => {
+  const token = (req.body && req.body.token) || '';
+  const result = acceptAuthToken(req, res, token);
+  if (!result.ok) {
+    // Re-render the login page with an error banner.
+    return res.status(result.status).send(renderLoginPage({ error: result.body }));
+  }
+  res.redirect('/');
+});
+
+// Lightweight login page — only rendered for unauth'd GET / requests
+// (see catch-all at the bottom) and on POST /auth failure.
+function renderLoginPage({ error } = {}) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowspace — sign in</title>
+<link rel="icon" type="image/png" href="/images/knowspace-logo.png">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #FAF9F6; color: #1a1a1a; }
+  @media (prefers-color-scheme: dark) { html, body { background: #0d0d0d; color: #e5e5e5; } .card { background: #1a1a1a !important; border-color: #333 !important; } input { background: #0d0d0d !important; color: #e5e5e5 !important; border-color: #333 !important; } }
+  .wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #fff; border: 1px solid #E8E4DD; border-radius: 14px; padding: 28px; width: 100%; max-width: 380px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  p.sub { margin: 0 0 20px; color: #6B6B6B; font-size: 13px; }
+  label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #6B6B6B; margin-bottom: 6px; }
+  input { width: 100%; padding: 10px 12px; border: 1px solid #E8E4DD; border-radius: 8px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; box-sizing: border-box; }
+  button { width: 100%; margin-top: 14px; padding: 10px; border: 0; border-radius: 8px; background: #8B5E3C; color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; }
+  button:hover { background: #6B4A32; }
+  .err { background: #fee; border: 1px solid #fcc; color: #9f1a1a; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <form class="card" method="POST" action="/auth" autocomplete="off">
+    <h1>Knowspace</h1>
+    <p class="sub">Paste your access token to sign in.</p>
+    ${error ? `<div class="err">${String(error).replace(/[<>&]/g, '')}</div>` : ''}
+    <label for="token">Access token</label>
+    <input id="token" name="token" type="password" autofocus spellcheck="false" autocapitalize="off" autocorrect="off" />
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+</body>
+</html>`;
+}
+
+app.get('/login', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.send(renderLoginPage());
 });
 
 // Logout route - clears the cookie
 app.get('/logout', (req, res) => {
   res.clearCookie('auth_token');
-  res.redirect('/');
+  res.redirect('/login');
 });
 
 // Client info endpoint
@@ -737,8 +807,14 @@ io.on('connection', async (socket) => {
   });
 });
 
-// Serve React app for all other routes
+// Serve the SPA shell for any other route. Unauth'd users hitting
+// deep-linked views get bounced to /login.
 app.get('*', (req, res) => {
+  const token = req.cookies && req.cookies.auth_token;
+  if (!token || !authManager.validateToken(token)) {
+    res.set('Cache-Control', 'no-store');
+    return res.redirect('/login');
+  }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
