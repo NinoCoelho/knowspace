@@ -153,8 +153,7 @@ Open the printed URL. Sign in with your token.
 
 ```bash
 knowspace serve [--port N]            Start the portal
-knowspace connect                     Configure the OpenClaw gateway (optional)
-knowspace configure [--reset]         Interactive setup wizard / menu
+knowspace configure [--reset]         Interactive setup wizard / menu (gateway, vault, token)
 
 knowspace daemon install              Install + start as background service
 knowspace daemon uninstall            Stop and remove

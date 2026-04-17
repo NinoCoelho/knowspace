@@ -2,7 +2,6 @@
 
 const commands = {
   serve: '../cli/serve',
-  connect: '../cli/connect',
   configure: '../cli/configure',
   daemon: '../cli/daemon',
   tokens: '../cli/tokens',
@@ -21,7 +20,6 @@ if (!command || command === '--help' || command === '-h') {
 
   Commands:
     serve                          Start the portal server
-    connect                        Configure the OpenClaw gateway (optional)
     configure                      Interactive setup (wizard or menu)
     daemon <sub>                   Manage the Knowspace daemon (install/uninstall/start/stop/restart/status/logs)
     tokens <sub>                   Manage access tokens (list/generate/rotate)
