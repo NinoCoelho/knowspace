@@ -6416,7 +6416,63 @@ function moveCard(sourceLaneId, targetLaneId, cardIndex, targetIndex) {
     targetLane.cards.splice(insertAt, 0, card);
     saveKanban();
     renderKanban();
+
+    // Phase E: trigger lane-configured agent on cross-lane drop.
+    if (sourceLaneId !== targetLaneId && targetLane.meta?.assignee) {
+      maybeAutoDispatchOnDrop(card, targetLane);
+    }
   }
+}
+
+async function maybeAutoDispatchOnDrop(card, targetLane) {
+  const assignee = targetLane.meta?.assignee;
+  if (!assignee) return;
+  const prompt = targetLane.meta?.prompt || '';
+
+  if (targetLane.meta?.autoDispatch) {
+    // Fire immediately. Save first so the card has a stable id and the
+    // lane move is on disk; the dispatch endpoint will then load it,
+    // append the ks:session, and write again.
+    showToast(`Auto-dispatching to ${assignee}…`);
+    try {
+      const res = await fetch(`/api/kanban/dispatch?token=${token}${asParam()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boardFile: currentKanbanFile || 'kanban.md',
+          cardId: card.id,
+          assignee,
+          notes: prompt || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      showToast(`Dispatched to ${data.providerId}:${data.agentId}`);
+      // Re-render so the new ks:session pill shows up
+      if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
+      else renderKanban();
+      try { socket.emit('sessions:watch', { sessionKey: data.sessionKey }); } catch { /* ignore */ }
+    } catch (err) {
+      showToast(`Auto-dispatch failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Manual: open the dispatch modal pre-filled with the lane defaults so
+  // the user can review (or cancel) before firing.
+  openDispatchModal(card.id, targetLane.id);
+  // openDispatchModal is async — wait a tick for the agent list to render,
+  // then prefill assignee + notes.
+  setTimeout(() => {
+    if (!dispatchModalState) return;
+    dispatchModalState.selectedAssignee = assignee;
+    const notesEl = document.getElementById('dispatchNotes');
+    if (notesEl && prompt) notesEl.value = prompt;
+    renderDispatchAgentList(); // re-render to apply selectedAssignee radio
+  }, 100);
 }
 
 async function addLane() {
