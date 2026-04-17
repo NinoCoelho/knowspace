@@ -6632,7 +6632,24 @@ async function openDispatchModal(cardId, laneId) {
   const modal = document.getElementById('dispatchModal');
   const list = document.getElementById('dispatchAgentList');
   const titleEl = document.getElementById('dispatchCardTitle');
+  const laneSelect = document.getElementById('dispatchTargetLane');
   if (titleEl) titleEl.textContent = card.title;
+  // Populate the lane picker from the currently-rendered kanban
+  if (laneSelect && currentKanban?.lanes) {
+    const opts = ['<option value="">(leave where it is)</option>'];
+    for (const ln of currentKanban.lanes) {
+      const isCurrent = ln.id === laneId;
+      const label = isCurrent ? `${ln.title} (current)` : ln.title;
+      opts.push(`<option value="${escapeHtml(ln.id)}"${isCurrent ? ' disabled' : ''}>${escapeHtml(label)}</option>`);
+    }
+    laneSelect.innerHTML = opts.join('');
+    laneSelect.value = '';
+  }
+  // Reset notes + cwd
+  const notesEl = document.getElementById('dispatchNotes');
+  if (notesEl) notesEl.value = '';
+  const cwdEl = document.getElementById('dispatchCwd');
+  if (cwdEl) cwdEl.value = '';
   if (list) list.innerHTML = '<div class="text-sm text-gray-500 p-3">Loading agents…</div>';
   modal?.classList.remove('hidden');
 
@@ -6691,11 +6708,13 @@ async function submitDispatch() {
   if (!dispatchModalState) return;
   const cwdInput = document.getElementById('dispatchCwd');
   const notesInput = document.getElementById('dispatchNotes');
+  const laneSelect = document.getElementById('dispatchTargetLane');
   const cwd = cwdInput?.value?.trim() || undefined;
   const notes = notesInput?.value?.trim() || undefined;
+  const targetLaneId = laneSelect?.value || undefined;
   const assignee = dispatchModalState.selectedAssignee;
   if (!assignee) {
-    alert('Pick an agent first.');
+    showToast('Pick an agent first.', 'error');
     return;
   }
   const btn = document.getElementById('dispatchSubmitBtn');
@@ -6710,6 +6729,7 @@ async function submitDispatch() {
         assignee,
         cwd,
         notes,
+        targetLaneId,
       }),
     });
     if (!res.ok) {
@@ -6718,30 +6738,45 @@ async function submitDispatch() {
     }
     const data = await res.json();
     closeDispatchModal();
-    // Reload the board so the new ks:session shows up on the card
+    // Stay on the kanban — re-render so the new ks:session pill (and any
+    // lane move) shows immediately, kick off a background watch so the
+    // agent reply lands in the buffer for when the user opens the card.
     if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
     else if (typeof renderKanban === 'function') renderKanban();
-    if (typeof toast === 'function') toast(`Dispatched to ${data.providerId}:${data.agentId}`);
-    else console.log('[dispatch] ok', data);
-    // Hop to the chat view on the new session so the user sees the agent reply.
-    // The dispatch endpoint already kicked off the prompt — we ask the
-    // server to watch this session and stream replies via chat:message
-    // since the standard chat-loop polling only triggers on chat:message,
-    // not REST-initiated sessions.
+    showToast(`Dispatched to ${data.providerId}:${data.agentId}`);
     try {
-      socket.emit('sessions:list');
-      socket.emit('sessions:switch', { sessionKey: data.sessionKey });
-      if (typeof switchView === 'function') switchView('chat');
-      activeSessionKey = data.sessionKey;
       socket.emit('sessions:watch', { sessionKey: data.sessionKey });
     } catch (err) {
-      console.warn('[dispatch] could not auto-switch to chat:', err.message);
+      console.warn('[dispatch] sessions:watch failed:', err.message);
     }
   } catch (err) {
-    alert(`Dispatch failed: ${err.message}`);
+    showToast(`Dispatch failed: ${err.message}`, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Dispatch'; }
   }
+}
+
+// Lightweight toast used by dispatch (and reusable elsewhere). Falls back
+// silently if the host already defines a `toast()` utility.
+function showToast(message, kind = 'info') {
+  if (typeof toast === 'function') return toast(message, kind);
+  let host = document.getElementById('ksToastHost');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'ksToastHost';
+    host.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;';
+    document.body.appendChild(host);
+  }
+  const t = document.createElement('div');
+  const bg = kind === 'error' ? '#b91c1c' : 'var(--accent-primary)';
+  t.style.cssText = `background:${bg};color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,0.15);opacity:0;transition:opacity 200ms ease;pointer-events:auto;max-width:520px;`;
+  t.textContent = message;
+  host.appendChild(t);
+  requestAnimationFrame(() => { t.style.opacity = '1'; });
+  setTimeout(() => {
+    t.style.opacity = '0';
+    setTimeout(() => t.remove(), 250);
+  }, 4000);
 }
 
 document.getElementById('dispatchModalClose')?.addEventListener('click', closeDispatchModal);

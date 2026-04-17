@@ -432,7 +432,7 @@ router.get('/agents', async (req, res) => {
 // path allowlist on `cwd`.
 router.post('/kanban/dispatch', async (req, res) => {
   const clientSlug = req.clientSlug;
-  const { boardFile, cardId, assignee, cwd, notes } = req.body || {};
+  const { boardFile, cardId, assignee, cwd, notes, targetLaneId } = req.body || {};
   if (!cardId || !assignee) {
     return res.status(400).json({ error: 'cardId and assignee required' });
   }
@@ -496,9 +496,22 @@ router.post('/kanban/dispatch', async (req, res) => {
     card.meta.assignee = assignee;
     card.meta.sessions = card.meta.sessions || [];
     card.meta.sessions.push({ provider: providerId, sessionId: sessionKey, status: 'running' });
+
+    // Optional: move the card to a different lane as part of the dispatch
+    let movedToLaneId;
+    if (targetLaneId && targetLaneId !== cardLane?.id) {
+      const targetLane = kanban.lanes.find(l => l.id === targetLaneId);
+      if (targetLane) {
+        const idx = cardLane.cards.findIndex(c => c.id === cardId);
+        if (idx !== -1) cardLane.cards.splice(idx, 1);
+        targetLane.cards.push(card);
+        movedToLaneId = targetLane.id;
+      }
+    }
+
     fs.writeFileSync(kanbanPath, serializeKanbanMarkdown(kanban), 'utf8');
 
-    res.json({ sessionKey, providerId, agentId });
+    res.json({ sessionKey, providerId, agentId, movedToLaneId });
   } catch (err) {
     console.error('Error dispatching card:', err);
     res.status(500).json({ error: 'dispatch failed: ' + err.message });
