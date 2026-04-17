@@ -24,7 +24,7 @@ if (!command || command === '--help' || command === '-h') {
 
   Commands:
     serve                       Start the portal server
-    connect                     Configure OpenClaw connection and install onboard skill
+    connect                     Configure the OpenClaw gateway connection
     configure                   Interactive setup (wizard or menu)
     daemon <sub>                Manage Knowspace as a system daemon (install/uninstall/start/stop/restart/status/logs)
     tokens list                 List all client tokens

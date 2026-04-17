@@ -3,21 +3,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const AuthManager = require('../middleware/auth');
-const enginePaths = require('../adapters/providers/openclaw/paths');
-
-const SKILLS = [
-  'knowspace-onboard',
-];
-
-const DEFAULT_SKILLS_TARGET = enginePaths.getSkillsTargetPath();
 
 module.exports = function onboard(argv) {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
       output: { type: 'string', short: 'o' },
-      'skills-target': { type: 'string' },
-      'skip-skills': { type: 'boolean' },
       'skip-token': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -26,25 +17,22 @@ module.exports = function onboard(argv) {
 
   if (values.help) {
     console.log(`
-  knowspace onboard - Onboard a client
+  knowspace onboard - Set up workspace templates and a portal token (legacy)
+
+  This command pre-dates the v2 multi-provider rewrite. It is kept for
+  workspace template scaffolding and one-shot token generation. Skill
+  installation was removed — use the provider/agent CLI instead:
+
+    knowspace providers list
+    knowspace agents add <id> --cmd <binary> [...]
 
   Usage:
     knowspace onboard <slug> [options]
 
-  Installs skills to the engine, outputs workspace templates,
-  and generates a portal access token.
-
   Options:
     --output, -o <dir>          Write templates to directory (default: print to stdout)
-    --skills-target <path>      Engine skills directory (default: auto-detected)
-    --skip-skills               Skip skill installation
     --skip-token                Skip token generation
     --help, -h                  Show this help
-
-  Examples:
-    knowspace onboard acme-corp
-    knowspace onboard acme-corp --output ~/acme-corp/workspace
-    knowspace onboard acme-corp --skills-target /opt/engine/skills
 `);
     return;
   }
@@ -56,15 +44,9 @@ module.exports = function onboard(argv) {
     process.exit(1);
   }
 
-  const skillsTarget = values['skills-target'] || DEFAULT_SKILLS_TARGET;
   const repoRoot = path.join(__dirname, '..');
 
-  // --- 1. Install skills ---
-  if (!values['skip-skills']) {
-    installSkills(repoRoot, skillsTarget);
-  }
-
-  // --- 2. Templates ---
+  // --- 1. Templates ---
   const templateVars = buildTemplateVars(slug);
   if (values.output) {
     writeTemplates(repoRoot, values.output, templateVars);
@@ -72,48 +54,20 @@ module.exports = function onboard(argv) {
     printTemplates(repoRoot, templateVars);
   }
 
-  // --- 3. Generate token ---
+  // --- 2. Generate token ---
   if (!values['skip-token']) {
     generateToken(repoRoot, slug);
   }
 
-  // --- 4. Workspace check ---
+  // --- 3. Workspace check ---
   const workspacePath = path.join(os.homedir(), slug, 'workspace');
   if (!fs.existsSync(workspacePath)) {
     console.log(`  \u26a0  Workspace not found at ${workspacePath}`);
-    console.log('     Create it via the main agent before the client can use the portal.\n');
+    console.log('     Create it manually if you intend to use it as a vault.\n');
   } else {
     console.log(`  Workspace: ${workspacePath}\n`);
   }
 };
-
-function installSkills(repoRoot, target) {
-  if (!fs.existsSync(target)) {
-    console.error(`\n  ERROR: Skills target directory not found: ${target}`);
-    console.error('  Is the engine installed? Use --skills-target to specify the correct path.\n');
-    process.exit(1);
-  }
-
-  console.log('\n  Installing skills...\n');
-  const skillsSource = path.join(repoRoot, 'skills');
-
-  for (const skill of SKILLS) {
-    const src = path.join(skillsSource, skill);
-    const dest = path.join(target, skill);
-
-    if (!fs.existsSync(src)) {
-      console.log(`    SKIP  ${skill} (not found in repo)`);
-      continue;
-    }
-
-    fs.cpSync(src, dest, {
-      recursive: true,
-      filter: (source) => !source.includes('__pycache__'),
-    });
-    console.log(`    OK    ${skill}`);
-  }
-  console.log();
-}
 
 function buildTemplateVars(slug) {
   const titleCase = slug
