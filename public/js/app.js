@@ -5908,7 +5908,31 @@ function renderCardContent(card) {
   if (c.body) {
     html += `<div class="card-body">${renderCardBody(c.body)}</div>`;
   }
+  if (c.meta?.assignee || (c.meta?.sessions && c.meta.sessions.length)) {
+    html += renderCardMetaBadge(c.meta);
+  }
   return html;
+}
+
+function renderCardMetaBadge(meta) {
+  const parts = [];
+  if (meta.assignee) {
+    parts.push(`<span class="card-meta-pill" title="Assignee">
+      <i class="fas fa-robot text-xs"></i> ${escapeHtml(meta.assignee)}
+    </span>`);
+  }
+  if (meta.sessions && meta.sessions.length) {
+    const last = meta.sessions[meta.sessions.length - 1];
+    const status = last.status || 'unknown';
+    const dot = status === 'running' ? '#10b981'
+              : status === 'done' ? '#6b7280'
+              : '#f59e0b';
+    parts.push(`<span class="card-meta-pill" title="Latest session: ${escapeHtml(last.sessionId || '')}">
+      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${dot};margin-right:4px;"></span>
+      ${escapeHtml(status)} · ${meta.sessions.length} session${meta.sessions.length > 1 ? 's' : ''}
+    </span>`);
+  }
+  return `<div class="card-meta">${parts.join('')}</div>`;
 }
 
 function renderKanban(container) {
@@ -6355,6 +6379,8 @@ function showCardContextMenu(cardId, laneId, anchorEl) {
 
   const menu = document.getElementById('cardContextMenu');
   const items = [
+    { icon: 'fa-paper-plane', label: 'Dispatch to agent…', action: 'dispatch', cls: 'dispatch-action' },
+    { separator: true },
     { icon: 'fa-comments', label: 'Chat about this card', action: 'chat-about', cls: '' },
     { icon: 'fa-list-check', label: 'Break down into subtasks', action: 'breakdown', cls: '' },
     { icon: 'fa-file-lines', label: 'Draft content', action: 'draft', cls: '' },
@@ -6384,7 +6410,9 @@ function showCardContextMenu(cardId, laneId, anchorEl) {
       const action = el.dataset.action;
       const ctx = cardContextMenuData;
       closeCardContextMenu();
-      if (action.startsWith('ai-')) {
+      if (action === 'dispatch') {
+        openDispatchModal(ctx.cardId, ctx.laneId);
+      } else if (action.startsWith('ai-')) {
         const aiKey = action.slice(3);
         executeCardAIAction(ctx.cardId, ctx.laneId, aiKey);
       } else {
@@ -6411,6 +6439,128 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeCardContextMenu();
 });
+
+// --- Card dispatch (kanban → agent) ---
+
+let dispatchModalState = null; // { cardId, laneId, agents, selectedAssignee, cwd }
+
+async function openDispatchModal(cardId, laneId) {
+  const lane = currentKanban?.lanes?.find(l => l.id === laneId);
+  const card = lane?.cards.find(c => c.id === cardId);
+  if (!card) return;
+
+  // Pre-select previous assignee if the card was dispatched before
+  dispatchModalState = {
+    cardId,
+    laneId,
+    cardTitle: card.title,
+    cardBody: card.body || '',
+    agents: [],
+    selectedAssignee: card.meta?.assignee || null,
+    cwd: '',
+  };
+
+  const modal = document.getElementById('dispatchModal');
+  const list = document.getElementById('dispatchAgentList');
+  const titleEl = document.getElementById('dispatchCardTitle');
+  if (titleEl) titleEl.textContent = card.title;
+  if (list) list.innerHTML = '<div class="text-sm text-gray-500 p-3">Loading agents…</div>';
+  modal?.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`/api/agents?token=${token}${asParam()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    dispatchModalState.agents = data.agents || [];
+    renderDispatchAgentList();
+  } catch (err) {
+    if (list) list.innerHTML = `<div class="text-sm text-red-500 p-3">Failed to load agents: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderDispatchAgentList() {
+  const list = document.getElementById('dispatchAgentList');
+  if (!list || !dispatchModalState) return;
+  const grouped = {};
+  for (const a of dispatchModalState.agents) {
+    (grouped[a.providerId] = grouped[a.providerId] || []).push(a);
+  }
+  const html = Object.entries(grouped).map(([providerId, agents]) => {
+    const items = agents.map(a => {
+      const id = `${providerId}:${a.id}`;
+      const checked = id === dispatchModalState.selectedAssignee ? 'checked' : '';
+      const cwdHint = a.kind === 'coder' ? ' <span style="color:var(--text-secondary);font-size:11px;">(coder)</span>' : '';
+      return `
+        <label class="dispatch-agent-row" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;cursor:pointer;">
+          <input type="radio" name="dispatchAssignee" value="${escapeHtml(id)}" ${checked} />
+          <div style="flex:1;">
+            <div style="font-weight:500;font-size:14px;">${escapeHtml(a.name)}${cwdHint}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(a.description || '')}</div>
+          </div>
+        </label>`;
+    }).join('');
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);padding:4px 12px;">${escapeHtml(providerId)}</div>
+        ${items || '<div class="text-sm text-gray-500 p-2">no agents</div>'}
+      </div>`;
+  }).join('');
+  list.innerHTML = html;
+  list.querySelectorAll('input[name="dispatchAssignee"]').forEach(input => {
+    input.addEventListener('change', () => {
+      dispatchModalState.selectedAssignee = input.value;
+    });
+  });
+}
+
+function closeDispatchModal() {
+  document.getElementById('dispatchModal')?.classList.add('hidden');
+  dispatchModalState = null;
+}
+
+async function submitDispatch() {
+  if (!dispatchModalState) return;
+  const cwdInput = document.getElementById('dispatchCwd');
+  const cwd = cwdInput?.value?.trim() || undefined;
+  const assignee = dispatchModalState.selectedAssignee;
+  if (!assignee) {
+    alert('Pick an agent first.');
+    return;
+  }
+  const btn = document.getElementById('dispatchSubmitBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Dispatching…'; }
+  try {
+    const res = await fetch(`/api/kanban/dispatch?token=${token}${asParam()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        boardFile: currentKanbanFile || 'kanban.md',
+        cardId: dispatchModalState.cardId,
+        assignee,
+        cwd,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    closeDispatchModal();
+    // Reload the board so the new ks:session shows up on the card
+    if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
+    else if (typeof renderKanban === 'function') renderKanban();
+    if (typeof toast === 'function') toast(`Dispatched to ${data.providerId}:${data.agentId}`);
+    else console.log('[dispatch] ok', data);
+  } catch (err) {
+    alert(`Dispatch failed: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Dispatch'; }
+  }
+}
+
+document.getElementById('dispatchModalClose')?.addEventListener('click', closeDispatchModal);
+document.getElementById('dispatchCancelBtn')?.addEventListener('click', closeDispatchModal);
+document.getElementById('dispatchSubmitBtn')?.addEventListener('click', submitDispatch);
 
 function chatAboutCard(context, promptTemplate) {
   const message = promptTemplate.replace('{context}', context);
