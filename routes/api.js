@@ -5,27 +5,31 @@ const fs = require('fs');
 const os = require('os');
 const matter = require('gray-matter');
 const Fuse = require('fuse.js');
+const providersRegistry = require('../adapters/providers');
+const { renderEnvelope, envelopeFromCard } = require('../lib/envelope');
+const sessionRouter = require('../lib/session-router');
+const fileResolver = require('../lib/file-resolver');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
-function getVaultBase(clientSlug) {
+function getVaultBase(_clientSlug) {
+  // v2 single-user: vault is a global path from ~/.knowspace/config.json.
+  // Legacy per-slug layout only used when config.slug is still pinned.
   let vaultPath;
   try {
     const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
-    if (config.vaultPath && config.slug === clientSlug) {
-      vaultPath = config.vaultPath;
-    }
+    if (config.vaultPath) vaultPath = config.vaultPath;
+    else if (config.slug) vaultPath = path.join(os.homedir(), config.slug, 'workspace', 'vault');
   } catch {
     // config not found or invalid — fall through
   }
   if (!vaultPath) {
-    vaultPath = path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+    vaultPath = path.join(os.homedir(), '.knowspace', 'vault');
   }
-  // Resolve symlinks so path comparisons work correctly (e.g. /Users → /private/Users on macOS)
   try {
     return fs.realpathSync(vaultPath);
   } catch {
-    return vaultPath; // path doesn't exist yet
+    return vaultPath;
   }
 }
 
@@ -141,6 +145,104 @@ router.put('/vault/file', (req, res) => {
     console.error('Error saving file:', error);
     res.status(500).json({ error: 'Failed to save file' });
   }
+});
+
+// Preview any file the user owns (vault, project dir, anywhere under
+// $HOME). Used by the chat to render file-path mentions as clickable
+// previews rather than walls of text.
+router.get('/file/preview', (req, res) => {
+  const requested = req.query.path;
+  if (!requested) return res.status(400).json({ error: 'path required' });
+
+  const vaultBase = getVaultBase(req.clientSlug);
+  const hit = fileResolver.resolve(requested, vaultBase);
+  if (!hit) return res.status(404).json({ error: 'not found', requested });
+  const resolved = hit.path;
+
+  let stat;
+  try { stat = fs.statSync(resolved); }
+  catch { return res.status(404).json({ error: 'not found' }); }
+  if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+
+  const MAX = 200 * 1024;
+  let content = '';
+  let truncated = false;
+  let binary = false;
+  let kind = 'text';
+  const ext = path.extname(resolved).toLowerCase().replace('.', '');
+  const textExts = ['md','markdown','txt','json','csv','tsv','js','mjs','cjs','ts','tsx','jsx','py','rb','go','rs','java','kt','swift','sh','bash','zsh','html','css','scss','sass','yml','yaml','toml','xml','svg','sql','env','log','ini','conf','cfg','dockerfile','makefile','gradle'];
+  const imageExts = ['png','jpg','jpeg','gif','webp','bmp','tif','tiff','avif','ico','heic'];
+  const base = path.basename(resolved).toLowerCase();
+
+  if (imageExts.includes(ext)) {
+    // Don't ship image bytes in the JSON — client fetches them via /api/file/raw.
+    kind = 'image';
+    binary = true;
+  } else if (!textExts.includes(ext) && !['readme','license','dockerfile','makefile'].includes(base)) {
+    binary = true;
+  } else {
+    const buf = fs.readFileSync(resolved);
+    if (buf.length > MAX) {
+      content = buf.slice(0, MAX).toString('utf8');
+      truncated = true;
+    } else {
+      content = buf.toString('utf8');
+    }
+  }
+
+  res.json({
+    path: resolved,
+    requested,
+    strategy: hit.strategy,
+    basename: path.basename(resolved),
+    ext,
+    size: stat.size,
+    truncated,
+    binary,
+    kind,
+    content,
+  });
+});
+
+// Streams the raw bytes of a file under $HOME with an appropriate
+// Content-Type. Used by the file preview modal to display images and
+// by anything else that wants direct <img>/<video>/<a download>.
+router.get('/file/raw', (req, res) => {
+  const requested = req.query.path;
+  if (!requested) return res.status(400).json({ error: 'path required' });
+
+  const vaultBase = getVaultBase(req.clientSlug);
+  const hit = fileResolver.resolve(requested, vaultBase);
+  if (!hit) return res.status(404).json({ error: 'not found' });
+  const resolved = hit.path;
+
+  let stat;
+  try { stat = fs.statSync(resolved); }
+  catch { return res.status(404).json({ error: 'not found' }); }
+  if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+
+  const ext = path.extname(resolved).toLowerCase().replace('.', '');
+  const mimes = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    svg: 'image/svg+xml', ico: 'image/x-icon', tif: 'image/tiff',
+    tiff: 'image/tiff', avif: 'image/avif', heic: 'image/heic',
+    pdf: 'application/pdf', mp4: 'video/mp4', webm: 'video/webm',
+    mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav',
+  };
+  const mime = mimes[ext] || 'application/octet-stream';
+
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  if (req.query.download === '1' || req.query.download === 'true') {
+    // RFC 5987: ASCII-safe filename + UTF-8 filename* for non-ASCII
+    const base = path.basename(resolved);
+    const safe = base.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '\\"');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(base)}`);
+  }
+  fs.createReadStream(resolved).pipe(res);
 });
 
 // Delete vault file
@@ -385,6 +487,166 @@ router.delete('/kanban', (req, res) => {
   } catch (error) {
     console.error('Error deleting kanban:', error);
     res.status(500).json({ error: 'Failed to delete kanban' });
+  }
+});
+
+// --- v2 multi-provider endpoints ---
+
+// List configured providers + capabilities
+router.get('/providers', (req, res) => {
+  const list = providersRegistry.listProviders().map(p => ({
+    id: p.id,
+    capabilities: p.capabilities || {},
+  }));
+  res.json({ providers: list });
+});
+
+// List agents across providers, optionally filtered by ?provider=<id>
+router.get('/agents', async (req, res) => {
+  try {
+    const filter = req.query.provider;
+    const targets = filter
+      ? [providersRegistry.getProvider(filter)]
+      : providersRegistry.listProviders();
+    const out = [];
+    for (const provider of targets) {
+      try {
+        const agents = await provider.listAgents();
+        for (const a of agents) {
+          out.push({ providerId: provider.id, ...a });
+        }
+      } catch (err) {
+        console.error(`[agents] ${provider.id} listAgents failed:`, err.message);
+      }
+    }
+    res.json({ agents: out });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Dispatch a kanban card to an agent: creates a session in the target
+// provider, sends the rendered envelope as the first prompt (fire and
+// forget — the chat loop picks up replies), and writes the resulting
+// session id back into the card's ks:session metadata. YOLO mode: no
+// path allowlist on `cwd`.
+router.post('/kanban/dispatch', async (req, res) => {
+  const clientSlug = req.clientSlug;
+  const { boardFile, cardId, assignee, cwd, notes, targetLaneId } = req.body || {};
+  if (!cardId || !assignee) {
+    return res.status(400).json({ error: 'cardId and assignee required' });
+  }
+  const file = boardFile || 'kanban.md';
+  const safe = path.basename(file);
+  const kanbanPath = path.join(getVaultBase(clientSlug), 'kanban', safe);
+  if (!fs.existsSync(kanbanPath)) {
+    return res.status(404).json({ error: 'board not found' });
+  }
+
+  const colon = assignee.indexOf(':');
+  if (colon === -1) {
+    return res.status(400).json({ error: 'assignee must be "<providerId>:<agentId>"' });
+  }
+  const providerId = assignee.slice(0, colon);
+  const agentId = assignee.slice(colon + 1);
+
+  let provider;
+  try {
+    provider = providersRegistry.getProvider(providerId);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  try {
+    const content = fs.readFileSync(kanbanPath, 'utf8');
+    const kanban = parseKanbanMarkdown(content);
+    let card = null;
+    let cardLane = null;
+    for (const lane of kanban.lanes) {
+      const found = lane.cards.find(c => c.id === cardId);
+      if (found) { card = found; cardLane = lane; break; }
+    }
+    if (!card) return res.status(404).json({ error: 'card not found' });
+
+    // Resolve vault refs into inline content for the envelope
+    const vaultBase = getVaultBase(clientSlug);
+    const refs = (card.meta?.vaultRefs || []).map(p => {
+      const refPath = path.join(vaultBase, p);
+      let inline;
+      try { inline = fs.readFileSync(refPath, 'utf8'); } catch { /* missing — fall through */ }
+      return { path: p, content: inline };
+    });
+
+    // Handoff context: if the card already has prior sessions, pull a
+    // short excerpt from the most recent one so the new agent picks up
+    // where the previous one left off. Best effort — never block the
+    // dispatch if the prior session is gone.
+    let conversationExcerpt;
+    let priorSessionMeta;
+    const priorSessions = card.meta?.sessions || [];
+    if (priorSessions.length > 0) {
+      const last = priorSessions[priorSessions.length - 1];
+      try {
+        const priorProvider = sessionRouter.getProviderForSession(last.sessionId);
+        const history = await priorProvider.loadHistory(last.sessionId, 50);
+        const tail = history.slice(-8); // last few turns
+        if (tail.length) {
+          priorSessionMeta = {
+            providerId: last.provider,
+            sessionKey: last.sessionId,
+            messageCount: history.length,
+          };
+          conversationExcerpt = tail.map(m => {
+            const role = m.role === 'assistant' ? 'previous-agent' : 'user';
+            const body = (m.content || '').toString().trim();
+            return `**${role}:** ${body}`;
+          }).join('\n\n');
+        }
+      } catch (err) {
+        console.warn(`[dispatch] could not pull prior excerpt: ${err.message}`);
+      }
+    }
+
+    const envelope = envelopeFromCard({
+      card,
+      boardFile: safe,
+      cwd,
+      vaultRefs: refs,
+      notes: notes && typeof notes === 'string' ? notes.trim() || undefined : undefined,
+      boardTitle: kanban.title,
+      laneTitle: cardLane?.title,
+    });
+    if (conversationExcerpt) envelope.conversationExcerpt = conversationExcerpt;
+    if (priorSessionMeta) envelope.source.fromSessionKey = priorSessionMeta.sessionKey;
+    const text = renderEnvelope(envelope);
+
+    const sessionKey = await provider.createSession(agentId, { cwd, label: card.title });
+    await provider.sendMessage(sessionKey, text);
+
+    // Persist assignee + session linkage back into the card
+    card.meta = card.meta || {};
+    card.meta.assignee = assignee;
+    card.meta.sessions = card.meta.sessions || [];
+    card.meta.sessions.push({ provider: providerId, sessionId: sessionKey, status: 'running' });
+
+    // Optional: move the card to a different lane as part of the dispatch
+    let movedToLaneId;
+    if (targetLaneId && targetLaneId !== cardLane?.id) {
+      const targetLane = kanban.lanes.find(l => l.id === targetLaneId);
+      if (targetLane) {
+        const idx = cardLane.cards.findIndex(c => c.id === cardId);
+        if (idx !== -1) cardLane.cards.splice(idx, 1);
+        targetLane.cards.push(card);
+        movedToLaneId = targetLane.id;
+      }
+    }
+
+    fs.writeFileSync(kanbanPath, serializeKanbanMarkdown(kanban), 'utf8');
+
+    res.json({ sessionKey, providerId, agentId, movedToLaneId });
+  } catch (err) {
+    console.error('Error dispatching card:', err);
+    res.status(500).json({ error: 'dispatch failed: ' + err.message });
   }
 });
 
@@ -771,105 +1033,12 @@ function walkDirectory(basePath, relativePath, files) {
   });
 }
 
-function parseKanbanMarkdown(content) {
-  const lines = content.split('\n');
-  const kanban = { title: 'Kanban', lanes: [] };
-
-  let currentLane = null;
-  let currentCard = null;
-  let bodyLines = [];
-  let inFrontmatter = false;
-  let inObsidianBlock = false;
-  let laneUsesHeaders = false;
-
-  function pushCard() {
-    if (currentCard && currentLane) {
-      currentCard.body = bodyLines.join('\n').trim();
-      currentLane.cards.push(currentCard);
-    }
-    bodyLines = [];
-  }
-
-  lines.forEach(line => {
-    // Skip frontmatter
-    if (line.trim() === '---') {
-      inFrontmatter = !inFrontmatter;
-      return;
-    }
-    if (inFrontmatter) return;
-
-    // Skip Obsidian settings block
-    if (line.trim().startsWith('%%')) {
-      inObsidianBlock = !inObsidianBlock;
-      return;
-    }
-    if (inObsidianBlock) return;
-
-    // Board title: # Title
-    if (/^# /.test(line) && !line.startsWith('## ') && !line.startsWith('### ')) {
-      kanban.title = line.replace(/^# /, '').trim();
-    }
-    // Lane header: ## Lane Title
-    else if (line.startsWith('## ')) {
-      pushCard();
-      if (currentLane) kanban.lanes.push(currentLane);
-
-      currentLane = {
-        id: line.replace('## ', '').trim().toLowerCase().replace(/\s+/g, '-'),
-        title: line.replace('## ', '').trim(),
-        cards: []
-      };
-      currentCard = null;
-      laneUsesHeaders = false;
-    }
-    // Card header: ### Card Title
-    else if (line.startsWith('### ') && currentLane) {
-      pushCard();
-      laneUsesHeaders = true;
-      currentCard = {
-        id: Date.now().toString() + Math.random(),
-        title: line.replace('### ', '').trim(),
-        body: ''
-      };
-    }
-    // Legacy card: non-indented bullet "- Card Title" (old format, only when lane has no ### cards)
-    else if (/^- /.test(line) && !/^[\t ]/.test(line) && currentLane && !laneUsesHeaders) {
-      pushCard();
-      currentCard = {
-        id: Date.now().toString() + Math.random(),
-        title: line.replace(/^- (\[[ x]\] )?/, '').trim(),
-        body: ''
-      };
-    }
-    // Card body content
-    else if (currentCard) {
-      bodyLines.push(line);
-    }
-  });
-
-  pushCard();
-  if (currentLane) kanban.lanes.push(currentLane);
-
-  return kanban;
-}
-
-function serializeKanbanMarkdown(kanban) {
-  let markdown = `---\nkanban-plugin: basic\n---\n\n# ${kanban.title}\n\n`;
-
-  kanban.lanes.forEach(lane => {
-    markdown += `## ${lane.title}\n\n`;
-
-    lane.cards.forEach(card => {
-      markdown += `### ${card.title}\n`;
-      if (card.body) {
-        markdown += card.body + '\n';
-      }
-      markdown += '\n';
-    });
-  });
-
-  return markdown;
-}
+// Kanban parsing/serialization lives in lib/kanban — adds invisible
+// <!-- ks:* --> metadata (stable card ids, assignee, linked sessions,
+// vault refs) on top of the Obsidian Kanban format. See lib/kanban.js.
+const { parseKanban, serializeKanban } = require('../lib/kanban');
+const parseKanbanMarkdown = parseKanban;
+const serializeKanbanMarkdown = serializeKanban;
 
 function createDefaultKanban() {
   return {

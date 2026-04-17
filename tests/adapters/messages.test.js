@@ -7,7 +7,7 @@ const {
   normalizeMessages,
   detectAgentStatus,
   isIntermediateMessage,
-} = require('../../adapters/engine/messages');
+} = require('../../adapters/providers/openclaw/messages');
 
 describe('extractMessageText', () => {
   it('returns empty for null/undefined', () => {

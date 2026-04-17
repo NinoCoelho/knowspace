@@ -2223,9 +2223,12 @@ function renderSessionList() {
     const div = document.createElement('div');
     div.className = `session-item ${isActive ? 'active' : ''}`;
     const isProcessing = processingSessions.has(session.key);
+    const agentBadge = session.agentName
+      ? `<span class="agent-pill" title="${escapeHtml(session.providerId || '')}:${escapeHtml(session.agentId || '')}">${escapeHtml(session.agentName)}</span>`
+      : '';
     div.innerHTML = `
       <div class="session-name">${isProcessing ? '<span class="processing-badge" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:6px;animation:pulse-badge 1.2s ease-in-out infinite;vertical-align:middle;"></span>' : ''}${escapeHtml(session.label || 'Untitled')}</div>
-      <div class="session-date">${isProcessing ? '<span style="color:#f59e0b;font-size:10px;">processing...</span>' : formatSessionDate(session.updatedAt)}</div>
+      <div class="session-date" style="display:flex;align-items:center;gap:6px;">${agentBadge}${isProcessing ? '<span style="color:#f59e0b;font-size:10px;">processing...</span>' : formatSessionDate(session.updatedAt)}</div>
       <div class="session-actions">
         <button class="session-action-btn rename-session" title="Rename">
           <i class="fas fa-pen"></i>
@@ -2274,6 +2277,112 @@ newSessionBtn.addEventListener('click', () => {
   if (currentView !== 'chat') switchView('chat');
   socket.emit('sessions:new');
 });
+
+// --- New chat with a specific agent (multi-provider picker) ---
+
+const newSessionWithAgentBtn = document.getElementById('newSessionWithAgentBtn');
+const agentPickerMenu = document.getElementById('agentPickerMenu');
+// Move the menu to <body> so any ancestor with `transform` / `filter`
+// (Tailwind utilities, etc.) doesn't trap our position:fixed inside it.
+if (agentPickerMenu && agentPickerMenu.parentElement !== document.body) {
+  document.body.appendChild(agentPickerMenu);
+}
+
+function positionAgentPicker() {
+  if (!agentPickerMenu || !newSessionWithAgentBtn) return;
+  const r = newSessionWithAgentBtn.getBoundingClientRect();
+  // Anchor below the button, right-aligned to the button's right edge.
+  // Then nudge left if it would overflow the right viewport edge.
+  const menuWidth = Math.min(360, Math.max(280, agentPickerMenu.offsetWidth || 280));
+  let left = r.right - menuWidth;
+  if (left < 8) left = 8;
+  if (left + menuWidth > window.innerWidth - 8) left = window.innerWidth - menuWidth - 8;
+  agentPickerMenu.style.left = left + 'px';
+  agentPickerMenu.style.top  = (r.bottom + 4) + 'px';
+}
+
+async function openAgentPicker() {
+  if (!agentPickerMenu) return;
+  agentPickerMenu.innerHTML = '<div class="text-sm text-gray-500 p-3">Loading agents…</div>';
+  agentPickerMenu.classList.remove('hidden');
+  positionAgentPicker();
+  try {
+    const res = await fetch(`/api/agents?token=${token}${asParam()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderAgentPicker(data.agents || []);
+    positionAgentPicker(); // re-measure after content lands
+  } catch (err) {
+    agentPickerMenu.innerHTML = `<div class="text-sm text-red-500 p-3">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+window.addEventListener('resize', () => {
+  if (agentPickerMenu && !agentPickerMenu.classList.contains('hidden')) positionAgentPicker();
+});
+
+function renderAgentPicker(agents) {
+  const grouped = {};
+  for (const a of agents) (grouped[a.providerId] = grouped[a.providerId] || []).push(a);
+
+  const html = Object.entries(grouped).map(([providerId, list]) => {
+    const items = list.map(a => {
+      const cwdHint = a.kind === 'coder' ? ' <span style="color:var(--text-secondary);font-size:11px;">(coder)</span>' : '';
+      return `<button class="agent-picker-row" data-provider="${escapeHtml(providerId)}" data-agent="${escapeHtml(a.id)}" data-kind="${escapeHtml(a.kind || '')}"
+        style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:none;cursor:pointer;border-radius:4px;">
+        <div style="font-weight:500;font-size:13px;">${escapeHtml(a.name)}${cwdHint}</div>
+        <div style="font-size:11px;color:var(--text-secondary);">${escapeHtml(a.description || a.id)}</div>
+      </button>`;
+    }).join('');
+    return `<div style="padding:6px 0;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);padding:4px 12px;">${escapeHtml(providerId)}</div>
+      ${items || '<div class="text-xs text-gray-500 px-3 py-1">no agents</div>'}
+    </div>`;
+  }).join('');
+
+  agentPickerMenu.innerHTML = html;
+  agentPickerMenu.querySelectorAll('.agent-picker-row').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const providerId = btn.dataset.provider;
+      const agentId = btn.dataset.agent;
+      const isCoder = btn.dataset.kind === 'coder';
+      agentPickerMenu.classList.add('hidden');
+      let cwd;
+      if (isCoder) {
+        const answer = await showPrompt(
+          `Working directory for ${agentId}`,
+          'Absolute path the agent should treat as its workspace. Leave blank to use the portal\'s cwd.',
+          '',
+        );
+        if (answer === null) return; // user cancelled
+        cwd = answer.trim() || undefined;
+      }
+      if (currentView !== 'chat') switchView('chat');
+      socket.emit('sessions:newWithAgent', { providerId, agentId, cwd });
+    });
+  });
+}
+
+newSessionWithAgentBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (agentPickerMenu?.classList.contains('hidden')) openAgentPicker();
+  else agentPickerMenu?.classList.add('hidden');
+});
+
+document.addEventListener('click', (e) => {
+  if (!agentPickerMenu || agentPickerMenu.classList.contains('hidden')) return;
+  if (e.target.closest('#agentPickerMenu') || e.target.closest('#newSessionWithAgentBtn')) return;
+  agentPickerMenu.classList.add('hidden');
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') agentPickerMenu?.classList.add('hidden');
+});
+
+// CSS hover for picker rows — applied inline since the file has no external CSS for this
+const _pickerStyle = document.createElement('style');
+_pickerStyle.textContent = `.agent-picker-row:hover { background: var(--bg-secondary); }`;
+document.head.appendChild(_pickerStyle);
 
 socket.on('sessions:list', (data) => {
   sessions = data.sessions || [];
@@ -2350,6 +2459,178 @@ if (typeof marked !== 'undefined') {
   });
 }
 
+// --- File-path linkifier ---
+// Replaces absolute (/Users/..., ~/...) and recognized-extension paths
+// inside text nodes with clickable links that open a preview modal.
+// Idempotent and DOM-safe — only walks text nodes, never re-touches
+// already-wrapped anchors.
+
+const FILE_PATH_EXT = '(?:md|markdown|txt|json|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|sh|bash|zsh|html|css|scss|sass|yml|yaml|toml|xml|svg|sql|env|log|ini|conf|cfg|gradle|png|jpg|jpeg|gif|webp|bmp|tiff?|avif|ico|heic)';
+// Permits spaces inside the path (macOS "Mobile Documents" etc).
+function makeFilePathRe() {
+  return new RegExp(
+    `((?:~|\\/)[\\w./~\\- ]+\\.${FILE_PATH_EXT})(?=$|[\\s,;:.!?)\\]}'"\`])`,
+    'g',
+  );
+}
+
+function linkifyFilePaths(root) {
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      const p = n.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      // Skip inside anchors (already linked), code BLOCKS (pre), and
+      // script/style. Inline <code> is OK — that's where most agents
+      // wrap paths and it's exactly where we want pills.
+      if (p.closest('a, .file-path-link, pre, script, style')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      // Cheap pre-filter: must contain a "/" or "~/" to be worth checking.
+      return /[~\/]/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const targets = [];
+  let n;
+  while ((n = walker.nextNode())) targets.push(n);
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const re = makeFilePathRe(); // fresh regex per node so /g state is clean
+    let m;
+    let last = 0;
+    let frag = null;
+    while ((m = re.exec(text)) !== null) {
+      if (!frag) frag = document.createDocumentFragment();
+      const start = m.index;
+      const matched = m[1];
+      if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
+      const a = document.createElement('a');
+      a.className = 'file-path-link';
+      a.href = 'javascript:void(0)';
+      a.dataset.path = matched;
+      a.title = matched;
+      a.textContent = matched.split('/').pop();
+      frag.appendChild(a);
+      last = start + matched.length;
+    }
+    if (frag) {
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+}
+
+// Open the file preview modal for an absolute (or ~/) path.
+async function openFilePreview(absPath) {
+  const modal = document.getElementById('filePreviewModal');
+  const basenameEl = document.getElementById('filePreviewBasename');
+  const bodyEl = document.getElementById('filePreviewBody');
+  const pathEl = document.getElementById('filePreviewPath');
+  if (!modal || !bodyEl) return;
+
+  const fallbackName = absPath.split('/').pop();
+  basenameEl.textContent = fallbackName;
+  pathEl.textContent = absPath;
+  bodyEl.innerHTML = '<div style="padding:8px;color:var(--text-secondary);">Loading…</div>';
+  modal.classList.remove('hidden');
+
+  try {
+    const url = `/api/file/preview?token=${token}${asParam()}&path=${encodeURIComponent(absPath)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      bodyEl.innerHTML = `<div style="color:#b91c1c;">${escapeHtml(err.error || 'Failed to load')}</div>`;
+      return;
+    }
+    const data = await res.json();
+    basenameEl.textContent = data.basename || fallbackName;
+    pathEl.textContent = data.path || absPath;
+    // If we resolved via vault-rooted / vault-basename / etc, surface
+    // that on the path tooltip so the user can see which heuristic ran.
+    if (data.strategy && data.strategy !== 'absolute') {
+      pathEl.title = `Resolved via ${data.strategy} (asked for: ${data.requested || absPath})`;
+    }
+    if (data.kind === 'image') {
+      // Stream bytes from /api/file/raw with an auth token so the <img>
+      // request hits the same session.
+      const rawUrl = `/api/file/raw?token=${encodeURIComponent(token)}${asParam()}&path=${encodeURIComponent(data.path || absPath)}`;
+      bodyEl.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = rawUrl;
+      img.alt = data.basename || fallbackName;
+      img.style.cssText = 'max-width:100%;height:auto;display:block;margin:0 auto;border-radius:8px;background:var(--bg-secondary);';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;justify-content:center;';
+      wrap.appendChild(img);
+      bodyEl.appendChild(wrap);
+      const note = document.createElement('div');
+      note.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-secondary);text-align:center;';
+      note.textContent = `${data.ext.toUpperCase()} · ${formatBytes(data.size)}`;
+      bodyEl.appendChild(note);
+      return;
+    }
+    if (data.binary) {
+      bodyEl.innerHTML = `<div style="color:var(--text-secondary);">Binary file — ${formatBytes(data.size)}. Open it locally to view.</div>`;
+      return;
+    }
+    if (['md','markdown'].includes(data.ext)) {
+      bodyEl.innerHTML = `<div class="prose max-w-none">${marked.parse(data.content || '')}</div>`;
+    } else {
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:var(--bg-secondary);padding:12px;border-radius:8px;font-size:12px;line-height:1.4;';
+      pre.textContent = data.content || '';
+      bodyEl.innerHTML = '';
+      bodyEl.appendChild(pre);
+    }
+    if (data.truncated) {
+      const note = document.createElement('div');
+      note.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-secondary);';
+      note.textContent = `Truncated — file is ${formatBytes(data.size)}, showing first 200 KB.`;
+      bodyEl.appendChild(note);
+    }
+  } catch (err) {
+    bodyEl.innerHTML = `<div style="color:#b91c1c;">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function formatBytes(n) {
+  if (typeof n !== 'number') return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+document.getElementById('filePreviewClose')?.addEventListener('click', () => {
+  document.getElementById('filePreviewModal')?.classList.add('hidden');
+});
+document.getElementById('filePreviewCopy')?.addEventListener('click', () => {
+  const p = document.getElementById('filePreviewPath')?.textContent || '';
+  if (p && navigator.clipboard) {
+    navigator.clipboard.writeText(p).then(() => showToast('Path copied'));
+  }
+});
+document.getElementById('filePreviewDownload')?.addEventListener('click', () => {
+  const p = document.getElementById('filePreviewPath')?.textContent || '';
+  if (!p) return;
+  // Same-origin <a download> trick — browser saves with the basename
+  // (Content-Disposition from the backend wins over the URL guess).
+  const url = `/api/file/raw?token=${encodeURIComponent(token)}${asParam()}&path=${encodeURIComponent(p)}&download=1`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = p.split('/').pop() || 'file';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 1000);
+});
+// Delegate clicks on linkified paths anywhere in the document.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('.file-path-link');
+  if (!a) return;
+  e.preventDefault();
+  openFilePreview(a.dataset.path);
+});
+
 // Render markdown with all post-processing enhancements
 function renderMarkdown(content, container) {
   if (typeof marked === 'undefined') return escapeHtml(content);
@@ -2405,6 +2686,11 @@ function renderMarkdown(content, container) {
         });
       } catch (e) { /* math render error */ }
     }
+
+    // Linkify absolute file paths (anywhere on disk under $HOME) so the
+    // user can preview / copy them without scrolling sideways through a
+    // wall of text.
+    try { linkifyFilePaths(container); } catch (e) { /* non-fatal */ }
 
     // Image lightbox
     container.querySelectorAll('img.lightbox-img').forEach(img => {
@@ -2503,6 +2789,11 @@ function applyMarkdownEnhancements(container) {
   container.querySelectorAll('img.lightbox-img').forEach(img => {
     img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
   });
+
+  // Linkify any file paths the agent dropped into the rendered markdown
+  // (sidebar chat, vault preview, modalProse — anything that runs through
+  // applyMarkdownEnhancements gets the same file pill + preview modal).
+  try { linkifyFilePaths(container); } catch (e) { /* non-fatal */ }
 
   // Wiki-style [[links]]
   container.querySelectorAll('.vault-wiki-link').forEach(link => {
@@ -5908,7 +6199,31 @@ function renderCardContent(card) {
   if (c.body) {
     html += `<div class="card-body">${renderCardBody(c.body)}</div>`;
   }
+  if (c.meta?.assignee || (c.meta?.sessions && c.meta.sessions.length)) {
+    html += renderCardMetaBadge(c.meta);
+  }
   return html;
+}
+
+function renderCardMetaBadge(meta) {
+  const parts = [];
+  if (meta.assignee) {
+    parts.push(`<span class="card-meta-pill" title="Assignee">
+      <i class="fas fa-robot text-xs"></i> ${escapeHtml(meta.assignee)}
+    </span>`);
+  }
+  if (meta.sessions && meta.sessions.length) {
+    const last = meta.sessions[meta.sessions.length - 1];
+    const status = last.status || 'unknown';
+    const dot = status === 'running' ? '#10b981'
+              : status === 'done' ? '#6b7280'
+              : '#f59e0b';
+    parts.push(`<span class="card-meta-pill" title="Latest session: ${escapeHtml(last.sessionId || '')}">
+      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${dot};margin-right:4px;"></span>
+      ${escapeHtml(status)} · ${meta.sessions.length} session${meta.sessions.length > 1 ? 's' : ''}
+    </span>`);
+  }
+  return `<div class="card-meta">${parts.join('')}</div>`;
 }
 
 function renderKanban(container) {
@@ -5923,14 +6238,11 @@ function renderKanban(container) {
 
     const cardsHtml = lane.cards.map((card, index) => {
       return `
-        <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}" data-lane-id="${lane.id}">
+        <div class="kanban-card" draggable="true" data-card-index="${index}" data-card-id="${card.id}" data-lane-id="${lane.id}" title="Click to open">
           ${renderCardContent(card)}
           <div class="card-actions">
             <button class="kebab-card-btn" data-card-id="${card.id}" data-lane-id="${lane.id}" title="AI actions">
               <i class="fas fa-ellipsis-vertical text-xs"></i>
-            </button>
-            <button class="edit-card-btn" data-card-id="${card.id}" title="Edit">
-              <i class="fas fa-pen text-xs"></i>
             </button>
             <button class="delete-card-btn" data-card-id="${card.id}" title="Delete">
               <i class="fas fa-trash text-xs"></i>
@@ -5939,16 +6251,31 @@ function renderKanban(container) {
         </div>`;
     }).join('');
 
+    const laneHasAgent = !!lane.meta?.assignee;
+    const autoBadge = lane.meta?.autoDispatch
+      ? '<span class="lane-auto-badge" title="Auto-dispatch on drop">AUTO</span>'
+      : '';
+    const agentBadge = laneHasAgent
+      ? `<span class="lane-agent-badge" title="${escapeHtml(lane.meta.assignee)}">${escapeHtml(lane.meta.assignee.split(':').pop())}</span>`
+      : '';
     column.innerHTML = `
       <div class="lane-header">
-        <div class="flex items-center">
+        <div class="flex items-center" style="gap:6px;">
           <h3>${escapeHtml(lane.title)}</h3>
           <span class="lane-count">${lane.cards.length}</span>
+          ${agentBadge}${autoBadge}
         </div>
-        <button class="add-card-btn" style="border:none;background:none;cursor:pointer;color:var(--accent-primary);font-size:14px;padding:4px 8px;border-radius:6px;transition:background 0.15s;"
-                onmouseover="this.style.background='rgba(212,165,116,0.1)'" onmouseout="this.style.background='none'">
-          <i class="fas fa-plus"></i>
-        </button>
+        <div class="flex items-center" style="gap:2px;">
+          <button class="lane-config-btn" data-lane-id="${lane.id}" title="Lane settings"
+                  style="border:none;background:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:4px 6px;border-radius:6px;transition:background 0.15s;"
+                  onmouseover="this.style.background='rgba(0,0,0,0.04)'" onmouseout="this.style.background='none'">
+            <i class="fas fa-gear"></i>
+          </button>
+          <button class="add-card-btn" style="border:none;background:none;cursor:pointer;color:var(--accent-primary);font-size:14px;padding:4px 8px;border-radius:6px;transition:background 0.15s;"
+                  onmouseover="this.style.background='rgba(212,165,116,0.1)'" onmouseout="this.style.background='none'">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
       </div>
       <div class="cards-container space-y-2 drop-zone" data-lane-id="${lane.id}">
         ${cardsHtml}
@@ -5962,11 +6289,20 @@ function renderKanban(container) {
       openNewCardModal(lane.id);
     });
 
-    // Edit/delete buttons
-    column.querySelectorAll('.edit-card-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openCardModal(lane.id, btn.dataset.cardId);
+    // Lane config (gear) — opens lane settings modal
+    column.querySelector('.lane-config-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openLaneConfigModal(lane.id);
+    });
+
+    // Whole-card click → open the modal. Skips when clicking on action
+    // buttons, drag-handle areas, or anything intentionally interactive
+    // (checkboxes, links inside the body).
+    column.querySelectorAll('.kanban-card').forEach(cardEl => {
+      cardEl.addEventListener('click', (e) => {
+        if (e.target.closest('.card-actions')) return;
+        if (e.target.closest('input,textarea,a,button,select,label')) return;
+        openCardModal(cardEl.dataset.laneId, cardEl.dataset.cardId);
       });
     });
 
@@ -6123,7 +6459,63 @@ function moveCard(sourceLaneId, targetLaneId, cardIndex, targetIndex) {
     targetLane.cards.splice(insertAt, 0, card);
     saveKanban();
     renderKanban();
+
+    // Phase E: trigger lane-configured agent on cross-lane drop.
+    if (sourceLaneId !== targetLaneId && targetLane.meta?.assignee) {
+      maybeAutoDispatchOnDrop(card, targetLane);
+    }
   }
+}
+
+async function maybeAutoDispatchOnDrop(card, targetLane) {
+  const assignee = targetLane.meta?.assignee;
+  if (!assignee) return;
+  const prompt = targetLane.meta?.prompt || '';
+
+  if (targetLane.meta?.autoDispatch) {
+    // Fire immediately. Save first so the card has a stable id and the
+    // lane move is on disk; the dispatch endpoint will then load it,
+    // append the ks:session, and write again.
+    showToast(`Auto-dispatching to ${assignee}…`);
+    try {
+      const res = await fetch(`/api/kanban/dispatch?token=${token}${asParam()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boardFile: currentKanbanFile || 'kanban.md',
+          cardId: card.id,
+          assignee,
+          notes: prompt || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      showToast(`Dispatched to ${data.providerId}:${data.agentId}`);
+      // Re-render so the new ks:session pill shows up
+      if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
+      else renderKanban();
+      try { socket.emit('sessions:watch', { sessionKey: data.sessionKey }); } catch { /* ignore */ }
+    } catch (err) {
+      showToast(`Auto-dispatch failed: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // Manual: open the dispatch modal pre-filled with the lane defaults so
+  // the user can review (or cancel) before firing.
+  openDispatchModal(card.id, targetLane.id);
+  // openDispatchModal is async — wait a tick for the agent list to render,
+  // then prefill assignee + notes.
+  setTimeout(() => {
+    if (!dispatchModalState) return;
+    dispatchModalState.selectedAssignee = assignee;
+    const notesEl = document.getElementById('dispatchNotes');
+    if (notesEl && prompt) notesEl.value = prompt;
+    renderDispatchAgentList(); // re-render to apply selectedAssignee radio
+  }, 100);
 }
 
 async function addLane() {
@@ -6354,12 +6746,14 @@ function showCardContextMenu(cardId, laneId, anchorEl) {
   cardContextMenuData = { cardId, laneId, cardTitle: card.title, cardBody: card.body || '', context };
 
   const menu = document.getElementById('cardContextMenu');
+  // Trimmed: the generic "Chat about this card / Break down / Draft /
+  // Research / Generate ideas" family spawned ad-hoc OpenClaw chat
+  // sessions and is now redundant with Dispatch + the card's Chat tab
+  // (which talks to the dispatched session). What's left is what only
+  // makes sense from this menu: dispatching the card and in-place AI
+  // edits to the card body.
   const items = [
-    { icon: 'fa-comments', label: 'Chat about this card', action: 'chat-about', cls: '' },
-    { icon: 'fa-list-check', label: 'Break down into subtasks', action: 'breakdown', cls: '' },
-    { icon: 'fa-file-lines', label: 'Draft content', action: 'draft', cls: '' },
-    { icon: 'fa-magnifying-glass', label: 'Research', action: 'research', cls: '' },
-    { icon: 'fa-lightbulb', label: 'Generate ideas', action: 'ideas', cls: '' },
+    { icon: 'fa-paper-plane', label: 'Dispatch to agent…', action: 'dispatch', cls: 'dispatch-action' },
     { separator: true },
     { icon: CARD_AI_ACTIONS.expand.icon, label: CARD_AI_ACTIONS.expand.label, action: 'ai-expand', cls: 'ai-action' },
     { icon: CARD_AI_ACTIONS.subtasks.icon, label: CARD_AI_ACTIONS.subtasks.label, action: 'ai-subtasks', cls: 'ai-action' },
@@ -6384,11 +6778,11 @@ function showCardContextMenu(cardId, laneId, anchorEl) {
       const action = el.dataset.action;
       const ctx = cardContextMenuData;
       closeCardContextMenu();
-      if (action.startsWith('ai-')) {
+      if (action === 'dispatch') {
+        openDispatchModal(ctx.cardId, ctx.laneId);
+      } else if (action.startsWith('ai-')) {
         const aiKey = action.slice(3);
         executeCardAIAction(ctx.cardId, ctx.laneId, aiKey);
-      } else {
-        chatAboutCard(ctx.context, CARD_PROMPT_TEMPLATES[action]);
       }
     });
   });
@@ -6411,6 +6805,313 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeCardContextMenu();
 });
+
+// --- Tool-use permission requests from ACP agents ---
+
+const permissionModal = document.getElementById('permissionModal');
+const permissionToolCard = document.getElementById('permissionToolCard');
+const permissionFooter = document.getElementById('permissionFooter');
+const permissionSession = document.getElementById('permissionSession');
+const permissionQueue = []; // serialized — only one prompt at a time
+let permissionShowing = null; // { id, options }
+
+function describeToolCall(tc) {
+  if (!tc) return '<i>unknown tool call</i>';
+  const title = tc.title || tc.name || tc.kind || 'tool';
+  const detail = tc.input ? `<pre style="margin-top:8px;padding:8px;background:var(--bg-primary);border:1px solid var(--border-light);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;">${escapeHtml(JSON.stringify(tc.input, null, 2))}</pre>` : '';
+  return `<div style="font-weight:500;font-size:14px;">${escapeHtml(title)}</div>${detail}`;
+}
+
+function styleForOption(kind) {
+  switch (kind) {
+    case 'allow_always':  return { bg: '#15803d', color: 'white' };
+    case 'allow_once':    return { bg: 'var(--accent-primary)', color: 'white' };
+    case 'reject_once':   return { bg: 'var(--bg-secondary)', color: 'var(--text-primary)' };
+    case 'reject_always': return { bg: '#b91c1c', color: 'white' };
+    default:              return { bg: 'var(--bg-secondary)', color: 'var(--text-primary)' };
+  }
+}
+
+function showNextPermission() {
+  if (permissionShowing) return;
+  const next = permissionQueue.shift();
+  if (!next) return;
+  permissionShowing = next;
+
+  permissionToolCard.innerHTML = describeToolCall(next.toolCall);
+  permissionSession.textContent = next.sessionKey ? `session: ${next.sessionKey}` : '';
+  permissionFooter.innerHTML = '';
+  for (const opt of next.options || []) {
+    const s = styleForOption(opt.kind);
+    const btn = document.createElement('button');
+    btn.className = 'px-4 py-2 rounded-lg text-sm font-medium';
+    btn.style.cssText = `background:${s.bg};color:${s.color};border:none;cursor:pointer;`;
+    btn.textContent = opt.name || opt.kind || 'option';
+    btn.addEventListener('click', () => respondPermission(opt.optionId));
+    permissionFooter.appendChild(btn);
+  }
+  permissionModal?.classList.remove('hidden');
+}
+
+function respondPermission(optionId) {
+  if (!permissionShowing) return;
+  socket.emit('permission:response', { id: permissionShowing.id, optionId });
+  permissionShowing = null;
+  permissionModal?.classList.add('hidden');
+  showNextPermission();
+}
+
+socket.on('permission:request', (req) => {
+  permissionQueue.push(req);
+  showNextPermission();
+});
+
+// --- Lane settings (config which agent + prompt template owns the lane) ---
+
+let laneConfigState = null; // { laneId }
+
+async function openLaneConfigModal(laneId) {
+  const lane = currentKanban?.lanes?.find(l => l.id === laneId);
+  if (!lane) return;
+  laneConfigState = { laneId };
+  const titleEl = document.getElementById('laneConfigTitle');
+  if (titleEl) titleEl.textContent = lane.title;
+
+  // Populate agent select with the same /api/agents listing
+  const select = document.getElementById('laneConfigAssignee');
+  if (select) {
+    select.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const res = await fetch(`/api/agents?token=${token}${asParam()}`);
+      const data = await res.json();
+      const opts = ['<option value="">(none — manual dispatch only)</option>'];
+      const grouped = {};
+      for (const a of data.agents || []) (grouped[a.providerId] = grouped[a.providerId] || []).push(a);
+      for (const [pid, list] of Object.entries(grouped)) {
+        opts.push(`<optgroup label="${escapeHtml(pid)}">`);
+        for (const a of list) {
+          const v = `${pid}:${a.id}`;
+          const sel = v === lane.meta?.assignee ? ' selected' : '';
+          opts.push(`<option value="${escapeHtml(v)}"${sel}>${escapeHtml(a.name || a.id)}</option>`);
+        }
+        opts.push('</optgroup>');
+      }
+      select.innerHTML = opts.join('');
+    } catch (err) {
+      select.innerHTML = `<option value="">load failed: ${escapeHtml(err.message)}</option>`;
+    }
+  }
+
+  document.getElementById('laneConfigPrompt').value = lane.meta?.prompt || '';
+  document.getElementById('laneConfigAutoDispatch').checked = !!lane.meta?.autoDispatch;
+  document.getElementById('laneConfigModal').classList.remove('hidden');
+}
+
+function closeLaneConfigModal() {
+  document.getElementById('laneConfigModal')?.classList.add('hidden');
+  laneConfigState = null;
+}
+
+async function saveLaneConfig(clear = false) {
+  if (!laneConfigState) return;
+  const lane = currentKanban?.lanes?.find(l => l.id === laneConfigState.laneId);
+  if (!lane) return;
+  if (clear) {
+    lane.meta = {};
+  } else {
+    const assignee = document.getElementById('laneConfigAssignee').value || '';
+    const prompt   = document.getElementById('laneConfigPrompt').value || '';
+    const auto     = document.getElementById('laneConfigAutoDispatch').checked;
+    lane.meta = lane.meta || {};
+    if (assignee) lane.meta.assignee = assignee; else delete lane.meta.assignee;
+    if (prompt.trim()) lane.meta.prompt = prompt.trim(); else delete lane.meta.prompt;
+    if (auto) lane.meta.autoDispatch = true; else delete lane.meta.autoDispatch;
+  }
+  closeLaneConfigModal();
+  await saveKanban();
+  if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
+  else if (typeof renderKanban === 'function') renderKanban();
+  showToast('Lane settings saved');
+}
+
+document.getElementById('laneConfigClose')?.addEventListener('click', closeLaneConfigModal);
+document.getElementById('laneConfigCancel')?.addEventListener('click', closeLaneConfigModal);
+document.getElementById('laneConfigSave')?.addEventListener('click', () => saveLaneConfig(false));
+document.getElementById('laneConfigClear')?.addEventListener('click', () => saveLaneConfig(true));
+
+// --- Card dispatch (kanban → agent) ---
+
+let dispatchModalState = null; // { cardId, laneId, agents, selectedAssignee, cwd }
+
+async function openDispatchModal(cardId, laneId) {
+  const lane = currentKanban?.lanes?.find(l => l.id === laneId);
+  const card = lane?.cards.find(c => c.id === cardId);
+  if (!card) return;
+
+  // Pre-select previous assignee if the card was dispatched before
+  dispatchModalState = {
+    cardId,
+    laneId,
+    cardTitle: card.title,
+    cardBody: card.body || '',
+    agents: [],
+    selectedAssignee: card.meta?.assignee || null,
+    cwd: '',
+  };
+
+  const modal = document.getElementById('dispatchModal');
+  const list = document.getElementById('dispatchAgentList');
+  const titleEl = document.getElementById('dispatchCardTitle');
+  const laneSelect = document.getElementById('dispatchTargetLane');
+  if (titleEl) titleEl.textContent = card.title;
+  // Populate the lane picker from the currently-rendered kanban
+  if (laneSelect && currentKanban?.lanes) {
+    const opts = ['<option value="">(leave where it is)</option>'];
+    for (const ln of currentKanban.lanes) {
+      const isCurrent = ln.id === laneId;
+      const label = isCurrent ? `${ln.title} (current)` : ln.title;
+      opts.push(`<option value="${escapeHtml(ln.id)}"${isCurrent ? ' disabled' : ''}>${escapeHtml(label)}</option>`);
+    }
+    laneSelect.innerHTML = opts.join('');
+    laneSelect.value = '';
+  }
+  // Reset notes + cwd
+  const notesEl = document.getElementById('dispatchNotes');
+  if (notesEl) notesEl.value = '';
+  const cwdEl = document.getElementById('dispatchCwd');
+  if (cwdEl) cwdEl.value = '';
+  if (list) list.innerHTML = '<div class="text-sm text-gray-500 p-3">Loading agents…</div>';
+  modal?.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`/api/agents?token=${token}${asParam()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    dispatchModalState.agents = data.agents || [];
+    renderDispatchAgentList();
+  } catch (err) {
+    if (list) list.innerHTML = `<div class="text-sm text-red-500 p-3">Failed to load agents: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderDispatchAgentList() {
+  const list = document.getElementById('dispatchAgentList');
+  if (!list || !dispatchModalState) return;
+  const grouped = {};
+  for (const a of dispatchModalState.agents) {
+    (grouped[a.providerId] = grouped[a.providerId] || []).push(a);
+  }
+  const html = Object.entries(grouped).map(([providerId, agents]) => {
+    const items = agents.map(a => {
+      const id = `${providerId}:${a.id}`;
+      const checked = id === dispatchModalState.selectedAssignee ? 'checked' : '';
+      const cwdHint = a.kind === 'coder' ? ' <span style="color:var(--text-secondary);font-size:11px;">(coder)</span>' : '';
+      return `
+        <label class="dispatch-agent-row" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;cursor:pointer;">
+          <input type="radio" name="dispatchAssignee" value="${escapeHtml(id)}" ${checked} />
+          <div style="flex:1;">
+            <div style="font-weight:500;font-size:14px;">${escapeHtml(a.name)}${cwdHint}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(a.description || '')}</div>
+          </div>
+        </label>`;
+    }).join('');
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);padding:4px 12px;">${escapeHtml(providerId)}</div>
+        ${items || '<div class="text-sm text-gray-500 p-2">no agents</div>'}
+      </div>`;
+  }).join('');
+  list.innerHTML = html;
+  list.querySelectorAll('input[name="dispatchAssignee"]').forEach(input => {
+    input.addEventListener('change', () => {
+      dispatchModalState.selectedAssignee = input.value;
+    });
+  });
+}
+
+function closeDispatchModal() {
+  document.getElementById('dispatchModal')?.classList.add('hidden');
+  dispatchModalState = null;
+}
+
+async function submitDispatch() {
+  if (!dispatchModalState) return;
+  const cwdInput = document.getElementById('dispatchCwd');
+  const notesInput = document.getElementById('dispatchNotes');
+  const laneSelect = document.getElementById('dispatchTargetLane');
+  const cwd = cwdInput?.value?.trim() || undefined;
+  const notes = notesInput?.value?.trim() || undefined;
+  const targetLaneId = laneSelect?.value || undefined;
+  const assignee = dispatchModalState.selectedAssignee;
+  if (!assignee) {
+    showToast('Pick an agent first.', 'error');
+    return;
+  }
+  const btn = document.getElementById('dispatchSubmitBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Dispatching…'; }
+  try {
+    const res = await fetch(`/api/kanban/dispatch?token=${token}${asParam()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        boardFile: currentKanbanFile || 'kanban.md',
+        cardId: dispatchModalState.cardId,
+        assignee,
+        cwd,
+        notes,
+        targetLaneId,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    closeDispatchModal();
+    // Stay on the kanban — re-render so the new ks:session pill (and any
+    // lane move) shows immediately, kick off a background watch so the
+    // agent reply lands in the buffer for when the user opens the card.
+    if (typeof renderKanbanFileView === 'function') renderKanbanFileView();
+    else if (typeof renderKanban === 'function') renderKanban();
+    showToast(`Dispatched to ${data.providerId}:${data.agentId}`);
+    try {
+      socket.emit('sessions:watch', { sessionKey: data.sessionKey });
+    } catch (err) {
+      console.warn('[dispatch] sessions:watch failed:', err.message);
+    }
+  } catch (err) {
+    showToast(`Dispatch failed: ${err.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Dispatch'; }
+  }
+}
+
+// Lightweight toast used by dispatch (and reusable elsewhere). Falls back
+// silently if the host already defines a `toast()` utility.
+function showToast(message, kind = 'info') {
+  if (typeof toast === 'function') return toast(message, kind);
+  let host = document.getElementById('ksToastHost');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'ksToastHost';
+    host.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;';
+    document.body.appendChild(host);
+  }
+  const t = document.createElement('div');
+  const bg = kind === 'error' ? '#b91c1c' : 'var(--accent-primary)';
+  t.style.cssText = `background:${bg};color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,0.15);opacity:0;transition:opacity 200ms ease;pointer-events:auto;max-width:520px;`;
+  t.textContent = message;
+  host.appendChild(t);
+  requestAnimationFrame(() => { t.style.opacity = '1'; });
+  setTimeout(() => {
+    t.style.opacity = '0';
+    setTimeout(() => t.remove(), 250);
+  }, 4000);
+}
+
+document.getElementById('dispatchModalClose')?.addEventListener('click', closeDispatchModal);
+document.getElementById('dispatchCancelBtn')?.addEventListener('click', closeDispatchModal);
+document.getElementById('dispatchSubmitBtn')?.addEventListener('click', submitDispatch);
 
 function chatAboutCard(context, promptTemplate) {
   const message = promptTemplate.replace('{context}', context);
@@ -6616,8 +7317,10 @@ function setCardSessionKey(laneId, cardTitle, sessionKey) {
 function showCardTab(tab) {
   document.getElementById('cardTabEdit').classList.toggle('active', tab === 'edit');
   document.getElementById('cardTabChat').classList.toggle('active', tab === 'chat');
-  document.getElementById('cardEditPane').classList.toggle('hidden', tab !== 'edit');
-  document.getElementById('cardChatPane').classList.toggle('hidden', tab !== 'chat');
+  // Use inline style.display directly — both panes have explicit
+  // display rules (block / flex) that beat the .hidden utility class.
+  document.getElementById('cardEditPane').style.display = tab === 'edit' ? '' : 'none';
+  document.getElementById('cardChatPane').style.display = tab === 'chat' ? 'flex' : 'none';
   document.getElementById('cardEditFooter').style.display = tab === 'edit' ? '' : 'none';
   if (tab === 'chat') initCardChat();
 }
@@ -6625,16 +7328,6 @@ function showCardTab(tab) {
 // Tab click handlers
 document.getElementById('cardTabEdit')?.addEventListener('click', () => showCardTab('edit'));
 document.getElementById('cardTabChat')?.addEventListener('click', () => showCardTab('chat'));
-
-// Context toggle
-document.getElementById('cardChatContextToggle')?.addEventListener('click', () => {
-  const content = document.getElementById('cardChatContextContent');
-  const icon = document.querySelector('#cardChatContextToggle i');
-  if (content) {
-    content.classList.toggle('hidden');
-    if (icon) icon.style.transform = content.classList.contains('hidden') ? '' : 'rotate(180deg)';
-  }
-});
 
 // Send message handler
 document.getElementById('cardChatSend')?.addEventListener('click', sendCardChatMessage);
@@ -6647,6 +7340,23 @@ cardChatInput?.addEventListener('keydown', (e) => {
   }
 });
 
+// The session currently displayed in the card chat tab. Set by
+// initCardChat(); used by the live chat:message socket handler so we
+// only append messages destined for the open card.
+let activeCardChatSessionKey = null;
+
+function pickCardSessionForChat(card, laneId) {
+  // Prefer the most recent ks:session on the card (set by dispatch /
+  // handoff). Fall back to the legacy per-card localStorage mapping
+  // for cards never dispatched but chatted about previously.
+  const sessions = card.meta?.sessions || [];
+  if (sessions.length) {
+    const last = sessions[sessions.length - 1];
+    if (last?.sessionId) return last.sessionId;
+  }
+  return getCardSessionKey(laneId, card.title);
+}
+
 async function initCardChat() {
   if (!editingCard) return;
   const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
@@ -6654,17 +7364,12 @@ async function initCardChat() {
   const card = migrateCard(lane.cards.find(c => c.id === editingCard.cardId));
   if (!card) return;
 
-  // Render card context
-  const contextContent = document.getElementById('cardChatContextContent');
-  if (contextContent) {
-    contextContent.innerHTML = `<strong>${escapeHtml(card.title)}</strong>` + (card.body ? `<br>${marked.parse(card.body)}` : '');
-  }
-
-  // Load existing session or show empty
   const msgContainer = document.getElementById('cardChatMessages');
   if (!msgContainer) return;
 
-  const sessionKey = getCardSessionKey(editingCard.laneId, card.title);
+  const sessionKey = pickCardSessionForChat(card, editingCard.laneId);
+  activeCardChatSessionKey = sessionKey;
+
   if (sessionKey) {
     try {
       const asQ = asParam();
@@ -6676,15 +7381,37 @@ async function initCardChat() {
           msgContainer.innerHTML = '';
           msgs.forEach(msg => renderCardChatMessage(msgContainer, msg.content, msg.role));
           msgContainer.scrollTop = msgContainer.scrollHeight;
+          // Make sure the server is streaming new messages for this
+          // session — sessions:watch is a no-op if already running.
+          try { socket.emit('sessions:watch', { sessionKey }); } catch { /* ignore */ }
           return;
         }
       }
     } catch { /* fall through to empty state */ }
   }
 
-  // Empty state
   msgContainer.innerHTML = '<div class="card-chat-empty"><i class="fas fa-robot" style="font-size:24px;opacity:0.3;display:block;margin-bottom:8px;"></i>Ask the AI about this card</div>';
 }
+
+// Stream replies into the open card chat tab. Hooked into the global
+// socket — only acts when the chat tab is open and the message belongs
+// to the session we're currently rendering.
+socket.on('chat:message', (msg) => {
+  if (!activeCardChatSessionKey) return;
+  const chatPane = document.getElementById('cardChatPane');
+  if (!chatPane || chatPane.classList.contains('hidden')) return;
+  // The chat:message event doesn't carry a sessionKey today (it's
+  // emitted to a single socket bound to one session at a time on the
+  // chat view). For card chat we trust the open session as the target.
+  const msgContainer = document.getElementById('cardChatMessages');
+  if (!msgContainer) return;
+  renderCardChatMessage(msgContainer, msg.content, msg.role || 'assistant');
+});
+
+// Reset the live binding when the modal closes
+document.getElementById('closeModal')?.addEventListener('click', () => {
+  activeCardChatSessionKey = null;
+});
 
 function renderCardChatMessage(container, content, role) {
   // Remove empty state
@@ -6696,6 +7423,7 @@ function renderCardChatMessage(container, content, role) {
 
   if (role === 'assistant') {
     div.innerHTML = marked.parse(content || '');
+    try { linkifyFilePaths(div); } catch { /* non-fatal */ }
     // Add "Apply to card" button
     const applyBtn = document.createElement('button');
     applyBtn.className = 'apply-to-card-btn';
@@ -6736,8 +7464,8 @@ async function sendCardChatMessage() {
 
   renderCardChatMessage(msgContainer, message, 'user');
 
-  // Ensure we have a session
-  let sessionKey = getCardSessionKey(editingCard.laneId, card.title);
+  // Prefer a dispatched session over the legacy per-card mapping
+  let sessionKey = pickCardSessionForChat(card, editingCard.laneId);
 
   try {
     if (!sessionKey) {

@@ -8,7 +8,7 @@ const path = require('path');
 const matter = require('gray-matter');
 const prompts = require('./prompts');
 const env = require('./env');
-const enginePaths = require('../../adapters/engine/paths');
+const enginePaths = require('../../adapters/providers/openclaw/paths');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 

@@ -8,22 +8,28 @@ const multer = require('multer');
 const cookieParser = require('cookie-parser');
 const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
-const engine = require('./adapters/engine');
+const providers = require('./adapters/providers');
+const engine = providers.engine;
+const sessionRouter = require('./lib/session-router');
+const permissionBroker = require('./lib/permission-broker');
+const acp = require('./adapters/providers/acp');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
-function getVaultBase(clientSlug) {
+function getVaultBase(_clientSlug) {
+  // v2 single-user: vault path is global, read from ~/.knowspace/config.json.
+  // Legacy per-slug layout (~/<slug>/workspace/vault) is honored only if the
+  // config file still has a `slug` pinned there.
   let vaultPath;
   try {
     const config = JSON.parse(fs.readFileSync(KNOWSPACE_CONFIG, 'utf8'));
-    if (config.vaultPath && config.slug === clientSlug) {
-      vaultPath = config.vaultPath;
-    }
+    if (config.vaultPath) vaultPath = config.vaultPath;
+    else if (config.slug) vaultPath = path.join(os.homedir(), config.slug, 'workspace', 'vault');
   } catch {
     // config not found or invalid — fall through
   }
   if (!vaultPath) {
-    vaultPath = path.join(os.homedir(), clientSlug, 'workspace', 'vault');
+    vaultPath = path.join(os.homedir(), '.knowspace', 'vault');
   }
   try {
     return fs.realpathSync(vaultPath);
@@ -94,6 +100,11 @@ const io = socketIo(server);
 
 const authManager = new AuthManager();
 
+// Wire the permission broker so ACP agents can ask the UI for tool-use
+// approval. Falls back to YOLO auto-allow when no UI is connected.
+permissionBroker.setSocketProvider(() => Array.from(io.sockets.sockets.values()));
+acp.setPermissionBroker(permissionBroker);
+
 // Configure multer for temp chat file uploads
 const tempStorage = multer.diskStorage({
   destination: (req, res, cb) => {
@@ -145,7 +156,7 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-// Gateway operations are handled by adapters/engine (sessions, chat, messages, paths)
+// Gateway operations are handled by adapters/providers/openclaw (sessions, chat, messages, paths)
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -182,39 +193,109 @@ app.use(cookieParser());
 app.get('/LICENSE', (_, res) => res.sendFile(path.join(__dirname, 'LICENSE')));
 app.get('/TERMS.md', (_, res) => res.sendFile(path.join(__dirname, 'TERMS.md')));
 
+// Guard the SPA entry point — if the visitor has no valid session
+// cookie, route them to the login form instead of serving index.html
+// (which would just fail on API calls anyway).
+app.get(['/', '/index.html'], (req, res, next) => {
+  const token = req.cookies && req.cookies.auth_token;
+  if (token && authManager.validateToken(token)) return next();
+  res.set('Cache-Control', 'no-store');
+  return res.redirect('/login');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Token authentication route - validates token in URL and sets cookie
-app.get('/auth', (req, res) => {
-  const token = req.query.token;
-
-  if (!token) {
-    return res.status(400).send('Token required');
+// GET /auth?token=... — legacy onboarding link flow. Kept so the
+// first-boot admin URL and shareable links keep working. The token is
+// consumed once, a cookie is set, and the browser is redirected to /
+// stripping the query string. Cache-Control is no-store so no proxy or
+// browser caches the sensitive URL.
+// POST /auth — form submission from the login page. Same validation,
+// same cookie, but the token never appears in a URL.
+function acceptAuthToken(req, res, token) {
+  res.set('Cache-Control', 'no-store');
+  if (!token || typeof token !== 'string') {
+    return { ok: false, status: 400, body: 'Token required' };
   }
-
   const clientSlug = authManager.validateToken(token);
-
   if (!clientSlug) {
-    return res.status(403).send('Invalid token');
+    return { ok: false, status: 403, body: 'Invalid token' };
   }
-
-  // Set secure httpOnly cookie
   const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
   res.cookie('auth_token', token, {
     httpOnly: false, // Allow JavaScript to access for Socket.IO
     secure: isSecure,
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
-    sameSite: 'lax'
+    sameSite: 'lax',
   });
+  return { ok: true, clientSlug };
+}
 
-  // Redirect to home page without token in URL
+app.get('/auth', (req, res) => {
+  const result = acceptAuthToken(req, res, req.query.token);
+  if (!result.ok) return res.status(result.status).send(result.body);
   res.redirect('/');
+});
+
+app.post('/auth', express.urlencoded({ extended: false }), (req, res) => {
+  const token = (req.body && req.body.token) || '';
+  const result = acceptAuthToken(req, res, token);
+  if (!result.ok) {
+    // Re-render the login page with an error banner.
+    return res.status(result.status).send(renderLoginPage({ error: result.body }));
+  }
+  res.redirect('/');
+});
+
+// Lightweight login page — only rendered for unauth'd GET / requests
+// (see catch-all at the bottom) and on POST /auth failure.
+function renderLoginPage({ error } = {}) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowspace — sign in</title>
+<link rel="icon" type="image/png" href="/images/knowspace-logo.png">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #FAF9F6; color: #1a1a1a; }
+  @media (prefers-color-scheme: dark) { html, body { background: #0d0d0d; color: #e5e5e5; } .card { background: #1a1a1a !important; border-color: #333 !important; } input { background: #0d0d0d !important; color: #e5e5e5 !important; border-color: #333 !important; } }
+  .wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #fff; border: 1px solid #E8E4DD; border-radius: 14px; padding: 28px; width: 100%; max-width: 380px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  p.sub { margin: 0 0 20px; color: #6B6B6B; font-size: 13px; }
+  label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #6B6B6B; margin-bottom: 6px; }
+  input { width: 100%; padding: 10px 12px; border: 1px solid #E8E4DD; border-radius: 8px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; box-sizing: border-box; }
+  button { width: 100%; margin-top: 14px; padding: 10px; border: 0; border-radius: 8px; background: #8B5E3C; color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; }
+  button:hover { background: #6B4A32; }
+  .err { background: #fee; border: 1px solid #fcc; color: #9f1a1a; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <form class="card" method="POST" action="/auth" autocomplete="off">
+    <h1>Knowspace</h1>
+    <p class="sub">Paste your access token to sign in.</p>
+    ${error ? `<div class="err">${String(error).replace(/[<>&]/g, '')}</div>` : ''}
+    <label for="token">Access token</label>
+    <input id="token" name="token" type="password" autofocus spellcheck="false" autocapitalize="off" autocorrect="off" />
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+</body>
+</html>`;
+}
+
+app.get('/login', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.send(renderLoginPage());
 });
 
 // Logout route - clears the cookie
 app.get('/logout', (req, res) => {
   res.clearCookie('auth_token');
-  res.redirect('/');
+  res.redirect('/login');
 });
 
 // Client info endpoint
@@ -239,7 +320,8 @@ app.get('/api/chat/history', async (req, res) => {
   }
 
   const sessionKey = req.query.sessionKey || engine.paths.getDefaultSessionKey(clientSlug);
-  const history = await engine.chat.loadHistory(sessionKey);
+  const provider = sessionRouter.getProviderForSession(sessionKey);
+  const history = await provider.loadHistory(sessionKey);
   res.json({ messages: history });
 });
 
@@ -361,18 +443,19 @@ app.post('/api/chat/send', async (req, res) => {
   req.setTimeout(30 * 60 * 1000); // 30 min timeout for long agent responses
 
   try {
-    const historyBefore = await engine.chat.loadHistory(sessionKey, 50);
+    const provider = sessionRouter.getProviderForSession(sessionKey);
+    const historyBefore = await provider.loadHistory(sessionKey, 50);
     const msgCountBefore = historyBefore.length;
 
-    await engine.chat.sendMessage(sessionKey, message);
+    await provider.sendMessage(sessionKey, message);
 
-    await engine.chat.pollForReply(sessionKey, msgCountBefore, {
-      pollIntervalMs: 2000,
-      maxPolls: 900,
+    await provider.pollForReply(sessionKey, msgCountBefore, {
+      pollIntervalMs: provider.id === 'acp' ? 250 : 2000,
+      maxPolls: provider.id === 'acp' ? 7200 : 900,
       idlePollsToStop: 3,
     });
 
-    const historyAfter = await engine.chat.loadHistory(sessionKey, 50);
+    const historyAfter = await provider.loadHistory(sessionKey, 50);
     const newMessages = historyAfter.slice(msgCountBefore);
 
     res.json({ messages: newMessages });
@@ -443,13 +526,13 @@ io.on('connection', async (socket) => {
 
   // Send session list and load the most recent session's history
   try {
-    const sessions = await engine.sessions.listSessions(socket.clientSlug);
+    const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
     socket.emit('sessions:list', { sessions });
 
     if (sessions.length > 0) {
       // Auto-select the most recent session
       socket.activeSessionKey = sessions[0].key;
-      const history = await engine.chat.loadHistory(sessions[0].key);
+      const history = await sessionRouter.getProviderForSession(sessions[0].key).loadHistory(sessions[0].key);
       socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
     }
   } catch (error) {
@@ -460,7 +543,7 @@ io.on('connection', async (socket) => {
 
   socket.on('sessions:list', async () => {
     try {
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:list error:', error.message);
@@ -470,7 +553,7 @@ io.on('connection', async (socket) => {
   socket.on('sessions:switch', async (data) => {
     try {
       socket.activeSessionKey = data.sessionKey;
-      const history = await engine.chat.loadHistory(data.sessionKey);
+      const history = await sessionRouter.getProviderForSession(data.sessionKey).loadHistory(data.sessionKey);
       socket.emit('chat:history', { messages: history, sessionKey: data.sessionKey });
     } catch (error) {
       console.error('sessions:switch error:', error.message);
@@ -484,17 +567,38 @@ io.on('connection', async (socket) => {
 
       // Clear chat and refresh session list
       socket.emit('chat:history', { messages: [], sessionKey: newKey });
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:new error:', error.message);
     }
   });
 
+  // Multi-provider variant: spawn a new session in any registered provider.
+  // data: { providerId, agentId, cwd?, label? }
+  socket.on('sessions:newWithAgent', async (data) => {
+    try {
+      const { providerId, agentId, cwd, label } = data || {};
+      if (!providerId || !agentId) {
+        socket.emit('chat:message', { role: 'assistant', content: 'sessions:newWithAgent: providerId and agentId are required.', timestamp: new Date().toISOString() });
+        return;
+      }
+      const provider = providers.getProvider(providerId);
+      const newKey = await provider.createSession(agentId, { cwd, label });
+      socket.activeSessionKey = newKey;
+      socket.emit('chat:history', { messages: [], sessionKey: newKey });
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
+      socket.emit('sessions:list', { sessions });
+    } catch (error) {
+      console.error('sessions:newWithAgent error:', error.message);
+      socket.emit('chat:message', { role: 'assistant', content: `Could not create session: ${error.message}`, timestamp: new Date().toISOString() });
+    }
+  });
+
   socket.on('sessions:rename', async (data) => {
     try {
       await engine.sessions.renameSession(data.sessionKey, data.name);
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
     } catch (error) {
       console.error('sessions:rename error:', error.message);
@@ -507,10 +611,10 @@ io.on('connection', async (socket) => {
 
       // If deleting the active session, switch to the next available
       if (socket.activeSessionKey === data.sessionKey) {
-        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
         if (sessions.length > 0) {
           socket.activeSessionKey = sessions[0].key;
-          const history = await engine.chat.loadHistory(sessions[0].key);
+          const history = await sessionRouter.getProviderForSession(sessions[0].key).loadHistory(sessions[0].key);
           socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
         } else {
           socket.activeSessionKey = null;
@@ -518,7 +622,7 @@ io.on('connection', async (socket) => {
         }
         socket.emit('sessions:list', { sessions });
       } else {
-        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
         socket.emit('sessions:list', { sessions });
       }
     } catch (error) {
@@ -543,7 +647,7 @@ io.on('connection', async (socket) => {
 
       if (sessions.length > 0) {
         socket.activeSessionKey = sessions[0].key;
-        const history = await engine.chat.loadHistory(sessions[0].key);
+        const history = await sessionRouter.getProviderForSession(sessions[0].key).loadHistory(sessions[0].key);
         socket.emit('chat:history', { messages: history, sessionKey: sessions[0].key });
       } else {
         socket.emit('chat:history', { messages: [], sessionKey: null });
@@ -560,6 +664,48 @@ io.on('connection', async (socket) => {
     socket.emit('agent:status', { processing: !!sessionProcessing.get(socket.activeSessionKey) });
   });
 
+  // --- Tool-use permission flow ---
+  socket.on('permission:response', (data) => {
+    if (!data || !data.id) return;
+    permissionBroker.respond(data.id, data.optionId);
+  });
+
+  // --- Watch a session for replies (used after kanban dispatch where
+  //     the message was sent via REST, not chat:message). Polls until
+  //     the agent goes idle and streams replies via chat:message.
+  socket.on('sessions:watch', async (data) => {
+    try {
+      const sessionKey = data?.sessionKey;
+      if (!sessionKey) return;
+      const provider = sessionRouter.getProviderForSession(sessionKey);
+      const history = await provider.loadHistory(sessionKey, 50);
+      const msgCountBefore = history.length;
+      sessionProcessing.set(sessionKey, true);
+      socket.emit('typing', { typing: true });
+
+      const result = await provider.pollForReply(sessionKey, msgCountBefore, {
+        pollIntervalMs: provider.id === 'acp' ? 250 : 2000,
+        maxPolls: provider.id === 'acp' ? 7200 : 900,
+        onProgress: (p) => socket.emit('agent:progress', typeof p === 'string' ? { status: p, tools: [] } : p),
+        onMessage: (m) => socket.emit('chat:message', m),
+        isDisconnected: () => socket.disconnected,
+      });
+
+      sessionProcessing.set(sessionKey, false);
+      socket.emit('typing', { typing: false });
+
+      if (!result.found) {
+        console.log(`[chat] watch: agent polling timed out for ${sessionKey}`);
+      }
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
+      socket.emit('sessions:list', { sessions });
+    } catch (err) {
+      console.error('sessions:watch error:', err.message);
+      sessionProcessing.set(data?.sessionKey, false);
+      socket.emit('typing', { typing: false });
+    }
+  });
+
   // --- Chat messaging via Gateway ---
 
   socket.on('chat:message', async (data) => {
@@ -571,7 +717,7 @@ io.on('connection', async (socket) => {
         socket.activeSessionKey = await engine.sessions.createSession(socket.clientSlug);
         // Immediately notify client of the new session so the sidebar updates
         socket.emit('chat:history', { messages: [], sessionKey: socket.activeSessionKey });
-        const sessions = await engine.sessions.listSessions(socket.clientSlug);
+        const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
         socket.emit('sessions:list', { sessions });
       }
 
@@ -611,15 +757,19 @@ io.on('connection', async (socket) => {
       }
       console.log(`[chat] ${socket.clientSlug}: sending to ${sessionKey}`);
 
+      // Route by session key prefix — the chat loop is provider-agnostic
+      const targetProvider = sessionRouter.getProviderForSession(sessionKey);
+
       // Get message count before sending so we can detect the new reply
-      const historyBefore = await engine.chat.loadHistory(sessionKey, 50);
+      const historyBefore = await targetProvider.loadHistory(sessionKey, 50);
       const msgCountBefore = historyBefore.length;
 
-      // Send via the engine adapter
-      await engine.chat.sendMessage(sessionKey, messageText);
+      await targetProvider.sendMessage(sessionKey, messageText);
 
       // Poll for the assistant response — emits each reply immediately via onMessage
-      const result = await engine.chat.pollForReply(sessionKey, msgCountBefore, {
+      const result = await targetProvider.pollForReply(sessionKey, msgCountBefore, {
+        pollIntervalMs: targetProvider.id === 'acp' ? 250 : 2000,
+        maxPolls: targetProvider.id === 'acp' ? 7200 : 900,
         onProgress: (data) => socket.emit('agent:progress', typeof data === 'string' ? { status: data, tools: [] } : data),
         onMessage: (reply) => socket.emit('chat:message', reply),
         isDisconnected: () => socket.disconnected,
@@ -634,11 +784,12 @@ io.on('connection', async (socket) => {
       socket.emit('typing', { typing: false });
 
       if (!result.found) {
-        console.log(`[chat] ${socket.clientSlug}: agent polling timed out after 30 min for ${sessionKey}`);
+        console.log(`[chat] ${socket.clientSlug}: agent polling timed out for ${sessionKey}`);
       }
 
-      // Refresh session list (title may have been derived from first message)
-      const sessions = await engine.sessions.listSessions(socket.clientSlug);
+      // Refresh session list (title may have been derived from first message).
+      // Aggregate across providers so ACP sessions show up alongside OpenClaw ones.
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
       socket.emit('sessions:list', { sessions });
 
     } catch (error) {
@@ -658,8 +809,14 @@ io.on('connection', async (socket) => {
   });
 });
 
-// Serve React app for all other routes
+// Serve the SPA shell for any other route. Unauth'd users hitting
+// deep-linked views get bounced to /login.
 app.get('*', (req, res) => {
+  const token = req.cookies && req.cookies.auth_token;
+  if (!token || !authManager.validateToken(token)) {
+    res.set('Cache-Control', 'no-store');
+    return res.redirect('/login');
+  }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

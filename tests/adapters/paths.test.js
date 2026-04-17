@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const paths = require('../../adapters/engine/paths');
+const paths = require('../../adapters/providers/openclaw/paths');
 
 describe('paths', () => {
   describe('getSessionPrefix', () => {
