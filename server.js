@@ -8,7 +8,8 @@ const multer = require('multer');
 const cookieParser = require('cookie-parser');
 const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
-const engine = require('./adapters/providers/openclaw');
+const providers = require('./adapters/providers');
+const engine = providers.engine;
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
