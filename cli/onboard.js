@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const AuthManager = require('../middleware/auth');
-const enginePaths = require('../adapters/engine/paths');
+const enginePaths = require('../adapters/providers/openclaw/paths');
 
 const SKILLS = [
   'knowspace-onboard',

@@ -8,7 +8,7 @@ const multer = require('multer');
 const cookieParser = require('cookie-parser');
 const AuthManager = require('./middleware/auth');
 const apiRoutes = require('./routes/api');
-const engine = require('./adapters/engine');
+const engine = require('./adapters/providers/openclaw');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
@@ -145,7 +145,7 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-// Gateway operations are handled by adapters/engine (sessions, chat, messages, paths)
+// Gateway operations are handled by adapters/providers/openclaw (sessions, chat, messages, paths)
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({

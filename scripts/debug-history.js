@@ -4,7 +4,7 @@
  * Usage: node scripts/debug-history.js <slug> [sessionKey]
  */
 
-const engine = require('../adapters/engine');
+const engine = require('../adapters/providers/openclaw');
 
 const slug = process.argv[2];
 if (!slug) {

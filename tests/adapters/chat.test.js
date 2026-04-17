@@ -1,6 +1,6 @@
 const { describe, it, beforeEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
-const chat = require('../../adapters/engine/chat');
+const chat = require('../../adapters/providers/openclaw/chat');
 
 describe('chat', () => {
   let mockRpc;
@@ -65,14 +65,17 @@ describe('chat', () => {
         };
       });
 
+      const replies = [];
       const result = await chat.pollForReply('agent:acme:main', 1, {
         pollIntervalMs: 10,
         maxPolls: 5,
+        onMessage: (m) => replies.push(m),
       });
 
       assert.ok(result.found);
-      assert.equal(result.reply.content, 'hi there');
-      assert.equal(result.reply.role, 'assistant');
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0].content, 'hi there');
+      assert.equal(replies[0].role, 'assistant');
     });
 
     it('returns not found after max polls', async () => {
@@ -80,13 +83,15 @@ describe('chat', () => {
         messages: [{ role: 'user', content: 'hello' }],
       }));
 
+      const replies = [];
       const result = await chat.pollForReply('agent:acme:main', 1, {
         pollIntervalMs: 10,
         maxPolls: 3,
+        onMessage: (m) => replies.push(m),
       });
 
       assert.ok(!result.found);
-      assert.equal(result.reply, null);
+      assert.equal(replies.length, 0);
     });
 
     it('stops polling when disconnected', async () => {
@@ -129,7 +134,8 @@ describe('chat', () => {
       await chat.pollForReply('agent:acme:main', 1, {
         pollIntervalMs: 10,
         maxPolls: 5,
-        onProgress: (s) => statuses.push(s),
+        onMessage: () => {},
+        onProgress: (p) => statuses.push(p.status),
       });
 
       assert.ok(statuses.includes('executing'));
@@ -156,13 +162,18 @@ describe('chat', () => {
         };
       });
 
+      const replies = [];
       const result = await chat.pollForReply('agent:acme:main', 1, {
         pollIntervalMs: 10,
         maxPolls: 10,
+        onMessage: (m) => replies.push(m),
       });
 
       assert.ok(result.found);
-      assert.equal(result.reply.content, 'done');
+      // Only the final 'done' message should be emitted; intermediate
+      // tool-use-only assistant messages are filtered out.
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0].content, 'done');
     });
   });
 });

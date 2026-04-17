@@ -9,7 +9,7 @@ const prompts = require('./configure/prompts');
 const gateway = require('./configure/gateway');
 const env = require('./configure/env');
 const { loadConfig, saveConfig } = require('./configure/state');
-const enginePaths = require('../adapters/engine/paths');
+const enginePaths = require('../adapters/providers/openclaw/paths');
 
 const SKILL_NAME = 'knowspace-onboard';
 const SKILL_SRC = path.join(__dirname, '..', 'skills', SKILL_NAME);

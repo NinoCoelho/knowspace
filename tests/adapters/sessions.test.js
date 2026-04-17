@@ -1,6 +1,6 @@
 const { describe, it, beforeEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
-const sessions = require('../../adapters/engine/sessions');
+const sessions = require('../../adapters/providers/openclaw/sessions');
 
 describe('sessions', () => {
   let mockRpc;
