@@ -2790,6 +2790,11 @@ function applyMarkdownEnhancements(container) {
     img.addEventListener('click', () => openLightbox(img.dataset.src || img.src, img.alt));
   });
 
+  // Linkify any file paths the agent dropped into the rendered markdown
+  // (sidebar chat, vault preview, modalProse — anything that runs through
+  // applyMarkdownEnhancements gets the same file pill + preview modal).
+  try { linkifyFilePaths(container); } catch (e) { /* non-fatal */ }
+
   // Wiki-style [[links]]
   container.querySelectorAll('.vault-wiki-link').forEach(link => {
     link.addEventListener('click', () => {
