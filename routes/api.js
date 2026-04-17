@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const matter = require('gray-matter');
 const Fuse = require('fuse.js');
+const providersRegistry = require('../adapters/providers');
+const { renderEnvelope, envelopeFromCard } = require('../lib/envelope');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
@@ -385,6 +387,112 @@ router.delete('/kanban', (req, res) => {
   } catch (error) {
     console.error('Error deleting kanban:', error);
     res.status(500).json({ error: 'Failed to delete kanban' });
+  }
+});
+
+// --- v2 multi-provider endpoints ---
+
+// List configured providers + capabilities
+router.get('/providers', (req, res) => {
+  const list = providersRegistry.listProviders().map(p => ({
+    id: p.id,
+    capabilities: p.capabilities || {},
+  }));
+  res.json({ providers: list });
+});
+
+// List agents across providers, optionally filtered by ?provider=<id>
+router.get('/agents', async (req, res) => {
+  try {
+    const filter = req.query.provider;
+    const targets = filter
+      ? [providersRegistry.getProvider(filter)]
+      : providersRegistry.listProviders();
+    const out = [];
+    for (const provider of targets) {
+      try {
+        const agents = await provider.listAgents();
+        for (const a of agents) {
+          out.push({ providerId: provider.id, ...a });
+        }
+      } catch (err) {
+        console.error(`[agents] ${provider.id} listAgents failed:`, err.message);
+      }
+    }
+    res.json({ agents: out });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Dispatch a kanban card to an agent: creates a session in the target
+// provider, sends the rendered envelope as the first prompt (fire and
+// forget — the chat loop picks up replies), and writes the resulting
+// session id back into the card's ks:session metadata. YOLO mode: no
+// path allowlist on `cwd`.
+router.post('/kanban/dispatch', async (req, res) => {
+  const clientSlug = req.clientSlug;
+  const { boardFile, cardId, assignee, cwd } = req.body || {};
+  if (!cardId || !assignee) {
+    return res.status(400).json({ error: 'cardId and assignee required' });
+  }
+  const file = boardFile || 'kanban.md';
+  const safe = path.basename(file);
+  const kanbanPath = path.join(getVaultBase(clientSlug), 'kanban', safe);
+  if (!fs.existsSync(kanbanPath)) {
+    return res.status(404).json({ error: 'board not found' });
+  }
+
+  const colon = assignee.indexOf(':');
+  if (colon === -1) {
+    return res.status(400).json({ error: 'assignee must be "<providerId>:<agentId>"' });
+  }
+  const providerId = assignee.slice(0, colon);
+  const agentId = assignee.slice(colon + 1);
+
+  let provider;
+  try {
+    provider = providersRegistry.getProvider(providerId);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  try {
+    const content = fs.readFileSync(kanbanPath, 'utf8');
+    const kanban = parseKanbanMarkdown(content);
+    let card = null;
+    for (const lane of kanban.lanes) {
+      const found = lane.cards.find(c => c.id === cardId);
+      if (found) { card = found; break; }
+    }
+    if (!card) return res.status(404).json({ error: 'card not found' });
+
+    // Resolve vault refs into inline content for the envelope
+    const vaultBase = getVaultBase(clientSlug);
+    const refs = (card.meta?.vaultRefs || []).map(p => {
+      const refPath = path.join(vaultBase, p);
+      let inline;
+      try { inline = fs.readFileSync(refPath, 'utf8'); } catch { /* missing — fall through */ }
+      return { path: p, content: inline };
+    });
+
+    const envelope = envelopeFromCard({ card, boardFile: safe, cwd, vaultRefs: refs });
+    const text = renderEnvelope(envelope);
+
+    const sessionKey = await provider.createSession(agentId, { cwd, label: card.title });
+    await provider.sendMessage(sessionKey, text);
+
+    // Persist assignee + session linkage back into the card
+    card.meta = card.meta || {};
+    card.meta.assignee = assignee;
+    card.meta.sessions = card.meta.sessions || [];
+    card.meta.sessions.push({ provider: providerId, sessionId: sessionKey, status: 'running' });
+    fs.writeFileSync(kanbanPath, serializeKanbanMarkdown(kanban), 'utf8');
+
+    res.json({ sessionKey, providerId, agentId });
+  } catch (err) {
+    console.error('Error dispatching card:', err);
+    res.status(500).json({ error: 'dispatch failed: ' + err.message });
   }
 });
 
