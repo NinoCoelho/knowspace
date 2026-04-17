@@ -6722,14 +6722,14 @@ function showCardContextMenu(cardId, laneId, anchorEl) {
   cardContextMenuData = { cardId, laneId, cardTitle: card.title, cardBody: card.body || '', context };
 
   const menu = document.getElementById('cardContextMenu');
+  // Trimmed: the generic "Chat about this card / Break down / Draft /
+  // Research / Generate ideas" family spawned ad-hoc OpenClaw chat
+  // sessions and is now redundant with Dispatch + the card's Chat tab
+  // (which talks to the dispatched session). What's left is what only
+  // makes sense from this menu: dispatching the card and in-place AI
+  // edits to the card body.
   const items = [
     { icon: 'fa-paper-plane', label: 'Dispatch to agent…', action: 'dispatch', cls: 'dispatch-action' },
-    { separator: true },
-    { icon: 'fa-comments', label: 'Chat about this card', action: 'chat-about', cls: '' },
-    { icon: 'fa-list-check', label: 'Break down into subtasks', action: 'breakdown', cls: '' },
-    { icon: 'fa-file-lines', label: 'Draft content', action: 'draft', cls: '' },
-    { icon: 'fa-magnifying-glass', label: 'Research', action: 'research', cls: '' },
-    { icon: 'fa-lightbulb', label: 'Generate ideas', action: 'ideas', cls: '' },
     { separator: true },
     { icon: CARD_AI_ACTIONS.expand.icon, label: CARD_AI_ACTIONS.expand.label, action: 'ai-expand', cls: 'ai-action' },
     { icon: CARD_AI_ACTIONS.subtasks.icon, label: CARD_AI_ACTIONS.subtasks.label, action: 'ai-subtasks', cls: 'ai-action' },
@@ -6759,8 +6759,6 @@ function showCardContextMenu(cardId, laneId, anchorEl) {
       } else if (action.startsWith('ai-')) {
         const aiKey = action.slice(3);
         executeCardAIAction(ctx.cardId, ctx.laneId, aiKey);
-      } else {
-        chatAboutCard(ctx.context, CARD_PROMPT_TEMPLATES[action]);
       }
     });
   });

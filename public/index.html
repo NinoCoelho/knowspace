@@ -747,7 +747,17 @@
       cursor: grab;
       transition: all 0.2s ease;
       position: relative;
+      /* Standardize the card footprint so the lane stays scannable.
+         Long bodies become scrollable inside the card; clicking the
+         card still opens the modal for the full read. */
+      max-height: 220px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
     }
+    .kanban-card::-webkit-scrollbar { width: 6px; }
+    .kanban-card::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+    .kanban-card::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
     .kanban-card:hover {
       box-shadow: 0 2px 8px rgba(0,0,0,0.06);
