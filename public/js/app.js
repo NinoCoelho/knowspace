@@ -7018,6 +7018,23 @@ cardChatInput?.addEventListener('keydown', (e) => {
   }
 });
 
+// The session currently displayed in the card chat tab. Set by
+// initCardChat(); used by the live chat:message socket handler so we
+// only append messages destined for the open card.
+let activeCardChatSessionKey = null;
+
+function pickCardSessionForChat(card, laneId) {
+  // Prefer the most recent ks:session on the card (set by dispatch /
+  // handoff). Fall back to the legacy per-card localStorage mapping
+  // for cards never dispatched but chatted about previously.
+  const sessions = card.meta?.sessions || [];
+  if (sessions.length) {
+    const last = sessions[sessions.length - 1];
+    if (last?.sessionId) return last.sessionId;
+  }
+  return getCardSessionKey(laneId, card.title);
+}
+
 async function initCardChat() {
   if (!editingCard) return;
   const lane = currentKanban.lanes.find(l => l.id === editingCard.laneId);
@@ -7025,17 +7042,21 @@ async function initCardChat() {
   const card = migrateCard(lane.cards.find(c => c.id === editingCard.cardId));
   if (!card) return;
 
-  // Render card context
+  // Render card context (collapsed by default)
   const contextContent = document.getElementById('cardChatContextContent');
   if (contextContent) {
-    contextContent.innerHTML = `<strong>${escapeHtml(card.title)}</strong>` + (card.body ? `<br>${marked.parse(card.body)}` : '');
+    const assignee = card.meta?.assignee
+      ? `<div style="font-size:11px;margin-top:6px;color:var(--text-secondary);">Assignee: <code>${escapeHtml(card.meta.assignee)}</code></div>`
+      : '';
+    contextContent.innerHTML = `<strong>${escapeHtml(card.title)}</strong>` + (card.body ? `<br>${marked.parse(card.body)}` : '') + assignee;
   }
 
-  // Load existing session or show empty
   const msgContainer = document.getElementById('cardChatMessages');
   if (!msgContainer) return;
 
-  const sessionKey = getCardSessionKey(editingCard.laneId, card.title);
+  const sessionKey = pickCardSessionForChat(card, editingCard.laneId);
+  activeCardChatSessionKey = sessionKey;
+
   if (sessionKey) {
     try {
       const asQ = asParam();
@@ -7047,15 +7068,37 @@ async function initCardChat() {
           msgContainer.innerHTML = '';
           msgs.forEach(msg => renderCardChatMessage(msgContainer, msg.content, msg.role));
           msgContainer.scrollTop = msgContainer.scrollHeight;
+          // Make sure the server is streaming new messages for this
+          // session — sessions:watch is a no-op if already running.
+          try { socket.emit('sessions:watch', { sessionKey }); } catch { /* ignore */ }
           return;
         }
       }
     } catch { /* fall through to empty state */ }
   }
 
-  // Empty state
   msgContainer.innerHTML = '<div class="card-chat-empty"><i class="fas fa-robot" style="font-size:24px;opacity:0.3;display:block;margin-bottom:8px;"></i>Ask the AI about this card</div>';
 }
+
+// Stream replies into the open card chat tab. Hooked into the global
+// socket — only acts when the chat tab is open and the message belongs
+// to the session we're currently rendering.
+socket.on('chat:message', (msg) => {
+  if (!activeCardChatSessionKey) return;
+  const chatPane = document.getElementById('cardChatPane');
+  if (!chatPane || chatPane.classList.contains('hidden')) return;
+  // The chat:message event doesn't carry a sessionKey today (it's
+  // emitted to a single socket bound to one session at a time on the
+  // chat view). For card chat we trust the open session as the target.
+  const msgContainer = document.getElementById('cardChatMessages');
+  if (!msgContainer) return;
+  renderCardChatMessage(msgContainer, msg.content, msg.role || 'assistant');
+});
+
+// Reset the live binding when the modal closes
+document.getElementById('closeModal')?.addEventListener('click', () => {
+  activeCardChatSessionKey = null;
+});
 
 function renderCardChatMessage(container, content, role) {
   // Remove empty state
@@ -7107,8 +7150,8 @@ async function sendCardChatMessage() {
 
   renderCardChatMessage(msgContainer, message, 'user');
 
-  // Ensure we have a session
-  let sessionKey = getCardSessionKey(editingCard.laneId, card.title);
+  // Prefer a dispatched session over the legacy per-card mapping
+  let sessionKey = pickCardSessionForChat(card, editingCard.laneId);
 
   try {
     if (!sessionKey) {
