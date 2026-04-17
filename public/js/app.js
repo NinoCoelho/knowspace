@@ -2275,6 +2275,83 @@ newSessionBtn.addEventListener('click', () => {
   socket.emit('sessions:new');
 });
 
+// --- New chat with a specific agent (multi-provider picker) ---
+
+const newSessionWithAgentBtn = document.getElementById('newSessionWithAgentBtn');
+const agentPickerMenu = document.getElementById('agentPickerMenu');
+
+async function openAgentPicker() {
+  if (!agentPickerMenu) return;
+  agentPickerMenu.innerHTML = '<div class="text-sm text-gray-500 p-3">Loading agents…</div>';
+  agentPickerMenu.classList.remove('hidden');
+  try {
+    const res = await fetch(`/api/agents?token=${token}${asParam()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderAgentPicker(data.agents || []);
+  } catch (err) {
+    agentPickerMenu.innerHTML = `<div class="text-sm text-red-500 p-3">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderAgentPicker(agents) {
+  const grouped = {};
+  for (const a of agents) (grouped[a.providerId] = grouped[a.providerId] || []).push(a);
+
+  const html = Object.entries(grouped).map(([providerId, list]) => {
+    const items = list.map(a => {
+      const cwdHint = a.kind === 'coder' ? ' <span style="color:var(--text-secondary);font-size:11px;">(coder)</span>' : '';
+      return `<button class="agent-picker-row" data-provider="${escapeHtml(providerId)}" data-agent="${escapeHtml(a.id)}" data-kind="${escapeHtml(a.kind || '')}"
+        style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:none;cursor:pointer;border-radius:4px;">
+        <div style="font-weight:500;font-size:13px;">${escapeHtml(a.name)}${cwdHint}</div>
+        <div style="font-size:11px;color:var(--text-secondary);">${escapeHtml(a.description || a.id)}</div>
+      </button>`;
+    }).join('');
+    return `<div style="padding:6px 0;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);padding:4px 12px;">${escapeHtml(providerId)}</div>
+      ${items || '<div class="text-xs text-gray-500 px-3 py-1">no agents</div>'}
+    </div>`;
+  }).join('');
+
+  agentPickerMenu.innerHTML = html;
+  agentPickerMenu.querySelectorAll('.agent-picker-row').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const providerId = btn.dataset.provider;
+      const agentId = btn.dataset.agent;
+      const isCoder = btn.dataset.kind === 'coder';
+      let cwd;
+      if (isCoder) {
+        cwd = window.prompt(`Working directory for ${agentId} (leave blank for portal cwd):`, '') || undefined;
+        if (cwd === '') cwd = undefined;
+      }
+      agentPickerMenu.classList.add('hidden');
+      if (currentView !== 'chat') switchView('chat');
+      socket.emit('sessions:newWithAgent', { providerId, agentId, cwd });
+    });
+  });
+}
+
+newSessionWithAgentBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (agentPickerMenu?.classList.contains('hidden')) openAgentPicker();
+  else agentPickerMenu?.classList.add('hidden');
+});
+
+document.addEventListener('click', (e) => {
+  if (!agentPickerMenu || agentPickerMenu.classList.contains('hidden')) return;
+  if (e.target.closest('#agentPickerMenu') || e.target.closest('#newSessionWithAgentBtn')) return;
+  agentPickerMenu.classList.add('hidden');
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') agentPickerMenu?.classList.add('hidden');
+});
+
+// CSS hover for picker rows — applied inline since the file has no external CSS for this
+const _pickerStyle = document.createElement('style');
+_pickerStyle.textContent = `.agent-picker-row:hover { background: var(--bg-secondary); }`;
+document.head.appendChild(_pickerStyle);
+
 socket.on('sessions:list', (data) => {
   sessions = data.sessions || [];
   renderSessionList();

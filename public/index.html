@@ -2676,10 +2676,17 @@
     <div id="sidebarChat" class="flex-1 flex flex-col min-h-0">
       <div class="px-4 py-1 flex items-center justify-between flex-shrink-0">
         <span class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-secondary);">Conversations</span>
-        <button id="newSessionBtn" class="px-2 py-1 rounded-md text-xs font-medium text-white transition-all hover:opacity-90"
-                style="background: var(--accent-primary);">
-          <i class="fas fa-plus mr-1"></i>New
-        </button>
+        <div class="flex items-center gap-1" style="position: relative;">
+          <button id="newSessionBtn" class="px-2 py-1 rounded-md text-xs font-medium text-white transition-all hover:opacity-90"
+                  style="background: var(--accent-primary);">
+            <i class="fas fa-plus mr-1"></i>New
+          </button>
+          <button id="newSessionWithAgentBtn" class="px-1.5 py-1 rounded-md text-xs text-white transition-all hover:opacity-90"
+                  style="background: var(--accent-primary);" title="New chat with a specific agent">
+            <i class="fas fa-caret-down"></i>
+          </button>
+          <div id="agentPickerMenu" class="hidden" style="position: absolute; top: 100%; right: 0; margin-top: 4px; min-width: 280px; max-height: 360px; overflow-y: auto; background: var(--bg-primary); border: 1px solid var(--border-light); border-radius: 8px; box-shadow: var(--shadow-subtle); z-index: 50;"></div>
+        </div>
       </div>
 <div id="sessionList" class="flex-1 overflow-y-auto px-3 pb-2 min-h-0"></div>
     </div>

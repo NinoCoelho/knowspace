@@ -495,6 +495,27 @@ io.on('connection', async (socket) => {
     }
   });
 
+  // Multi-provider variant: spawn a new session in any registered provider.
+  // data: { providerId, agentId, cwd?, label? }
+  socket.on('sessions:newWithAgent', async (data) => {
+    try {
+      const { providerId, agentId, cwd, label } = data || {};
+      if (!providerId || !agentId) {
+        socket.emit('chat:message', { role: 'assistant', content: 'sessions:newWithAgent: providerId and agentId are required.', timestamp: new Date().toISOString() });
+        return;
+      }
+      const provider = providers.getProvider(providerId);
+      const newKey = await provider.createSession(agentId, { cwd, label });
+      socket.activeSessionKey = newKey;
+      socket.emit('chat:history', { messages: [], sessionKey: newKey });
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
+      socket.emit('sessions:list', { sessions });
+    } catch (error) {
+      console.error('sessions:newWithAgent error:', error.message);
+      socket.emit('chat:message', { role: 'assistant', content: `Could not create session: ${error.message}`, timestamp: new Date().toISOString() });
+    }
+  });
+
   socket.on('sessions:rename', async (data) => {
     try {
       await engine.sessions.renameSession(data.sessionKey, data.name);
