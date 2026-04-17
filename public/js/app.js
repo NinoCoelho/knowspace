@@ -2467,22 +2467,24 @@ if (typeof marked !== 'undefined') {
 
 const FILE_PATH_EXT = '(?:md|markdown|txt|json|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|sh|bash|zsh|html|css|scss|sass|yml|yaml|toml|xml|svg|sql|env|log|ini|conf|cfg|gradle)';
 // Permits spaces inside the path (macOS "Mobile Documents" etc).
-const FILE_PATH_RE = new RegExp(
-  `((?:~|\\/)[\\w./~\\- ]+\\.${FILE_PATH_EXT})(?=$|[\\s,;:.!?)\\]}'"\`])`,
-  'g',
-);
+function makeFilePathRe() {
+  return new RegExp(
+    `((?:~|\\/)[\\w./~\\- ]+\\.${FILE_PATH_EXT})(?=$|[\\s,;:.!?)\\]}'"\`])`,
+    'g',
+  );
+}
 
 function linkifyFilePaths(root) {
   if (!root) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
-      // Skip text inside already-linkified nodes, code blocks, anchors
       const p = n.parentElement;
       if (!p) return NodeFilter.FILTER_REJECT;
       if (p.closest('a, .file-path-link, code, pre, script, style')) {
         return NodeFilter.FILTER_REJECT;
       }
-      return FILE_PATH_RE.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      // Cheap pre-filter: must contain a "/" or "~/" to be worth checking.
+      return /[~\/]/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
   const targets = [];
@@ -2490,11 +2492,12 @@ function linkifyFilePaths(root) {
   while ((n = walker.nextNode())) targets.push(n);
   for (const node of targets) {
     const text = node.nodeValue;
-    FILE_PATH_RE.lastIndex = 0;
-    const frag = document.createDocumentFragment();
-    let last = 0;
+    const re = makeFilePathRe(); // fresh regex per node so /g state is clean
     let m;
-    while ((m = FILE_PATH_RE.exec(text)) !== null) {
+    let last = 0;
+    let frag = null;
+    while ((m = re.exec(text)) !== null) {
+      if (!frag) frag = document.createDocumentFragment();
       const start = m.index;
       const matched = m[1];
       if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
@@ -2507,8 +2510,10 @@ function linkifyFilePaths(root) {
       frag.appendChild(a);
       last = start + matched.length;
     }
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    node.parentNode.replaceChild(frag, node);
+    if (frag) {
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
   }
 }
 
