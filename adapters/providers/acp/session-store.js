@@ -17,10 +17,27 @@
 const persistence = require('./persistence');
 
 const sessions = new Map(); // sessionKey -> SessionState
+// Reverse index so connection.js's sessionUpdate hook (which receives a
+// providerSessionId, not a Knowspace key) can find the right state even
+// after a reattach has rotated providerSessionId.
+const byProviderSessionId = new Map(); // providerSessionId -> sessionKey
+
+function _index(state) {
+  if (state && state.providerSessionId) {
+    byProviderSessionId.set(state.providerSessionId, state.key);
+  }
+}
+function _unindex(state) {
+  if (state && state.providerSessionId) {
+    const cur = byProviderSessionId.get(state.providerSessionId);
+    if (cur === state.key) byProviderSessionId.delete(state.providerSessionId);
+  }
+}
 
 function loadFromDisk() {
   for (const data of persistence.loadAll()) {
     sessions.set(data.key, data);
+    _index(data);
   }
 }
 
@@ -47,10 +64,17 @@ function makeSession({ key, providerSessionId, agentId, cwd }) {
 
 function add(state) {
   sessions.set(state.key, state);
+  _index(state);
   persistence.save(state);
 }
 function get(key)   { return sessions.get(key); }
+function getByProviderSessionId(providerSessionId) {
+  const key = byProviderSessionId.get(providerSessionId);
+  return key ? sessions.get(key) : undefined;
+}
 function remove(key){
+  const state = sessions.get(key);
+  if (state) _unindex(state);
   const ok = sessions.delete(key);
   persistence.deleteFor(key);
   return ok;
@@ -146,13 +170,17 @@ function updateLabel(state, label) {
 
 function markAttached(state, providerSessionId) {
   state.attached = true;
-  if (providerSessionId) state.providerSessionId = providerSessionId;
+  if (providerSessionId && providerSessionId !== state.providerSessionId) {
+    _unindex(state);
+    state.providerSessionId = providerSessionId;
+    _index(state);
+  }
   persistence.save(state);
 }
 
 module.exports = {
   makeSession,
-  add, get, remove,
+  add, get, getByProviderSessionId, remove,
   listForAgent,
   applyUpdate,
   recordUserMessage,
@@ -161,5 +189,6 @@ module.exports = {
   updateLabel,
   markAttached,
   _sessionsForTest: sessions,
+  _byProviderSessionIdForTest: byProviderSessionId,
   _loadFromDisk: loadFromDisk,
 };

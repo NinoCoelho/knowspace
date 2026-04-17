@@ -54,17 +54,24 @@ async function ensureConnection(agentId) {
   const recipe = getRecipe(agentId);
   return connection.getOrCreate(recipe, {
     onSessionUpdate(params) {
-      const key = buildSessionKey(agentId, params.sessionId);
-      const state = store.get(key);
+      // After a reattach, the providerSessionId no longer matches the
+      // Knowspace session key suffix — look up by providerSessionId
+      // instead so updates land on the right state buffer.
+      const state = store.getByProviderSessionId(params.sessionId)
+                 || store.get(buildSessionKey(agentId, params.sessionId));
       if (!state) return; // session may have been deleted
       store.applyUpdate(state, params.update);
     },
     onPermission: _permissionBroker
-      ? (params) => _permissionBroker.request({
-          sessionKey: buildSessionKey(agentId, params.sessionId),
-          toolCall: params.toolCall,
-          options: params.options,
-        })
+      ? (params) => {
+          const state = store.getByProviderSessionId(params.sessionId);
+          const sessionKey = state ? state.key : buildSessionKey(agentId, params.sessionId);
+          return _permissionBroker.request({
+            sessionKey,
+            toolCall: params.toolCall,
+            options: params.options,
+          });
+        }
       : undefined,
   });
 }
