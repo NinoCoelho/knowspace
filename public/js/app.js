@@ -6517,6 +6517,66 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeCardContextMenu();
 });
 
+// --- Tool-use permission requests from ACP agents ---
+
+const permissionModal = document.getElementById('permissionModal');
+const permissionToolCard = document.getElementById('permissionToolCard');
+const permissionFooter = document.getElementById('permissionFooter');
+const permissionSession = document.getElementById('permissionSession');
+const permissionQueue = []; // serialized — only one prompt at a time
+let permissionShowing = null; // { id, options }
+
+function describeToolCall(tc) {
+  if (!tc) return '<i>unknown tool call</i>';
+  const title = tc.title || tc.name || tc.kind || 'tool';
+  const detail = tc.input ? `<pre style="margin-top:8px;padding:8px;background:var(--bg-primary);border:1px solid var(--border-light);border-radius:6px;font-size:11px;max-height:160px;overflow:auto;">${escapeHtml(JSON.stringify(tc.input, null, 2))}</pre>` : '';
+  return `<div style="font-weight:500;font-size:14px;">${escapeHtml(title)}</div>${detail}`;
+}
+
+function styleForOption(kind) {
+  switch (kind) {
+    case 'allow_always':  return { bg: '#15803d', color: 'white' };
+    case 'allow_once':    return { bg: 'var(--accent-primary)', color: 'white' };
+    case 'reject_once':   return { bg: 'var(--bg-secondary)', color: 'var(--text-primary)' };
+    case 'reject_always': return { bg: '#b91c1c', color: 'white' };
+    default:              return { bg: 'var(--bg-secondary)', color: 'var(--text-primary)' };
+  }
+}
+
+function showNextPermission() {
+  if (permissionShowing) return;
+  const next = permissionQueue.shift();
+  if (!next) return;
+  permissionShowing = next;
+
+  permissionToolCard.innerHTML = describeToolCall(next.toolCall);
+  permissionSession.textContent = next.sessionKey ? `session: ${next.sessionKey}` : '';
+  permissionFooter.innerHTML = '';
+  for (const opt of next.options || []) {
+    const s = styleForOption(opt.kind);
+    const btn = document.createElement('button');
+    btn.className = 'px-4 py-2 rounded-lg text-sm font-medium';
+    btn.style.cssText = `background:${s.bg};color:${s.color};border:none;cursor:pointer;`;
+    btn.textContent = opt.name || opt.kind || 'option';
+    btn.addEventListener('click', () => respondPermission(opt.optionId));
+    permissionFooter.appendChild(btn);
+  }
+  permissionModal?.classList.remove('hidden');
+}
+
+function respondPermission(optionId) {
+  if (!permissionShowing) return;
+  socket.emit('permission:response', { id: permissionShowing.id, optionId });
+  permissionShowing = null;
+  permissionModal?.classList.add('hidden');
+  showNextPermission();
+}
+
+socket.on('permission:request', (req) => {
+  permissionQueue.push(req);
+  showNextPermission();
+});
+
 // --- Card dispatch (kanban → agent) ---
 
 let dispatchModalState = null; // { cardId, laneId, agents, selectedAssignee, cwd }

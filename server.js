@@ -11,6 +11,8 @@ const apiRoutes = require('./routes/api');
 const providers = require('./adapters/providers');
 const engine = providers.engine;
 const sessionRouter = require('./lib/session-router');
+const permissionBroker = require('./lib/permission-broker');
+const acp = require('./adapters/providers/acp');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
@@ -95,6 +97,11 @@ const server = http.createServer(app);
 const io = socketIo(server);
 
 const authManager = new AuthManager();
+
+// Wire the permission broker so ACP agents can ask the UI for tool-use
+// approval. Falls back to YOLO auto-allow when no UI is connected.
+permissionBroker.setSocketProvider(() => Array.from(io.sockets.sockets.values()));
+acp.setPermissionBroker(permissionBroker);
 
 // Configure multer for temp chat file uploads
 const tempStorage = multer.diskStorage({
@@ -583,6 +590,12 @@ io.on('connection', async (socket) => {
   // --- Agent status check ---
   socket.on('agent:status', () => {
     socket.emit('agent:status', { processing: !!sessionProcessing.get(socket.activeSessionKey) });
+  });
+
+  // --- Tool-use permission flow ---
+  socket.on('permission:response', (data) => {
+    if (!data || !data.id) return;
+    permissionBroker.respond(data.id, data.optionId);
   });
 
   // --- Chat messaging via Gateway ---

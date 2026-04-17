@@ -44,6 +44,12 @@ function getRecipe(agentId) {
   return r;
 }
 
+// Optional permission broker injected by server.js. When unset (e.g. in
+// scripts/smoke-acp.js or CLI tests), permission requests fall through
+// to the connection's auto-allow default.
+let _permissionBroker = null;
+function setPermissionBroker(broker) { _permissionBroker = broker; }
+
 async function ensureConnection(agentId) {
   const recipe = getRecipe(agentId);
   return connection.getOrCreate(recipe, {
@@ -53,6 +59,13 @@ async function ensureConnection(agentId) {
       if (!state) return; // session may have been deleted
       store.applyUpdate(state, params.update);
     },
+    onPermission: _permissionBroker
+      ? (params) => _permissionBroker.request({
+          sessionKey: buildSessionKey(agentId, params.sessionId),
+          toolCall: params.toolCall,
+          options: params.options,
+        })
+      : undefined,
   });
 }
 
@@ -276,6 +289,7 @@ const provider = {
 module.exports = {
   provider,
   setRecipeOverrides,
+  setPermissionBroker,
   // Test seams
   _buildSessionKey: buildSessionKey,
   _parseSessionKey: parseSessionKey,
