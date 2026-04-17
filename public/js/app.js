@@ -6690,7 +6690,9 @@ function closeDispatchModal() {
 async function submitDispatch() {
   if (!dispatchModalState) return;
   const cwdInput = document.getElementById('dispatchCwd');
+  const notesInput = document.getElementById('dispatchNotes');
   const cwd = cwdInput?.value?.trim() || undefined;
+  const notes = notesInput?.value?.trim() || undefined;
   const assignee = dispatchModalState.selectedAssignee;
   if (!assignee) {
     alert('Pick an agent first.');
@@ -6707,6 +6709,7 @@ async function submitDispatch() {
         cardId: dispatchModalState.cardId,
         assignee,
         cwd,
+        notes,
       }),
     });
     if (!res.ok) {
@@ -6721,11 +6724,16 @@ async function submitDispatch() {
     if (typeof toast === 'function') toast(`Dispatched to ${data.providerId}:${data.agentId}`);
     else console.log('[dispatch] ok', data);
     // Hop to the chat view on the new session so the user sees the agent reply.
-    // Refresh sessions:list so the sidebar picks up the freshly-created ACP session.
+    // The dispatch endpoint already kicked off the prompt — we ask the
+    // server to watch this session and stream replies via chat:message
+    // since the standard chat-loop polling only triggers on chat:message,
+    // not REST-initiated sessions.
     try {
       socket.emit('sessions:list');
       socket.emit('sessions:switch', { sessionKey: data.sessionKey });
       if (typeof switchView === 'function') switchView('chat');
+      activeSessionKey = data.sessionKey;
+      socket.emit('sessions:watch', { sessionKey: data.sessionKey });
     } catch (err) {
       console.warn('[dispatch] could not auto-switch to chat:', err.message);
     }

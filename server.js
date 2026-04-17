@@ -598,6 +598,42 @@ io.on('connection', async (socket) => {
     permissionBroker.respond(data.id, data.optionId);
   });
 
+  // --- Watch a session for replies (used after kanban dispatch where
+  //     the message was sent via REST, not chat:message). Polls until
+  //     the agent goes idle and streams replies via chat:message.
+  socket.on('sessions:watch', async (data) => {
+    try {
+      const sessionKey = data?.sessionKey;
+      if (!sessionKey) return;
+      const provider = sessionRouter.getProviderForSession(sessionKey);
+      const history = await provider.loadHistory(sessionKey, 50);
+      const msgCountBefore = history.length;
+      sessionProcessing.set(sessionKey, true);
+      socket.emit('typing', { typing: true });
+
+      const result = await provider.pollForReply(sessionKey, msgCountBefore, {
+        pollIntervalMs: provider.id === 'acp' ? 250 : 2000,
+        maxPolls: provider.id === 'acp' ? 7200 : 900,
+        onProgress: (p) => socket.emit('agent:progress', typeof p === 'string' ? { status: p, tools: [] } : p),
+        onMessage: (m) => socket.emit('chat:message', m),
+        isDisconnected: () => socket.disconnected,
+      });
+
+      sessionProcessing.set(sessionKey, false);
+      socket.emit('typing', { typing: false });
+
+      if (!result.found) {
+        console.log(`[chat] watch: agent polling timed out for ${sessionKey}`);
+      }
+      const sessions = await sessionRouter.listAllSessions({ clientSlug: socket.clientSlug });
+      socket.emit('sessions:list', { sessions });
+    } catch (err) {
+      console.error('sessions:watch error:', err.message);
+      sessionProcessing.set(data?.sessionKey, false);
+      socket.emit('typing', { typing: false });
+    }
+  });
+
   // --- Chat messaging via Gateway ---
 
   socket.on('chat:message', async (data) => {

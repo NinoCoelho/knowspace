@@ -432,7 +432,7 @@ router.get('/agents', async (req, res) => {
 // path allowlist on `cwd`.
 router.post('/kanban/dispatch', async (req, res) => {
   const clientSlug = req.clientSlug;
-  const { boardFile, cardId, assignee, cwd } = req.body || {};
+  const { boardFile, cardId, assignee, cwd, notes } = req.body || {};
   if (!cardId || !assignee) {
     return res.status(400).json({ error: 'cardId and assignee required' });
   }
@@ -461,9 +461,10 @@ router.post('/kanban/dispatch', async (req, res) => {
     const content = fs.readFileSync(kanbanPath, 'utf8');
     const kanban = parseKanbanMarkdown(content);
     let card = null;
+    let cardLane = null;
     for (const lane of kanban.lanes) {
       const found = lane.cards.find(c => c.id === cardId);
-      if (found) { card = found; break; }
+      if (found) { card = found; cardLane = lane; break; }
     }
     if (!card) return res.status(404).json({ error: 'card not found' });
 
@@ -476,7 +477,15 @@ router.post('/kanban/dispatch', async (req, res) => {
       return { path: p, content: inline };
     });
 
-    const envelope = envelopeFromCard({ card, boardFile: safe, cwd, vaultRefs: refs });
+    const envelope = envelopeFromCard({
+      card,
+      boardFile: safe,
+      cwd,
+      vaultRefs: refs,
+      notes: notes && typeof notes === 'string' ? notes.trim() || undefined : undefined,
+      boardTitle: kanban.title,
+      laneTitle: cardLane?.title,
+    });
     const text = renderEnvelope(envelope);
 
     const sessionKey = await provider.createSession(agentId, { cwd, label: card.title });
