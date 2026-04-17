@@ -182,9 +182,17 @@ router.get('/file/preview', (req, res) => {
   let content = '';
   let truncated = false;
   let binary = false;
+  let kind = 'text';
   const ext = path.extname(resolved).toLowerCase().replace('.', '');
   const textExts = ['md','markdown','txt','json','csv','tsv','js','mjs','cjs','ts','tsx','jsx','py','rb','go','rs','java','kt','swift','sh','bash','zsh','html','css','scss','sass','yml','yaml','toml','xml','svg','sql','env','log','ini','conf','cfg','dockerfile','makefile','gradle'];
-  if (!textExts.includes(ext) && !['readme','license','dockerfile','makefile'].includes(path.basename(resolved).toLowerCase())) {
+  const imageExts = ['png','jpg','jpeg','gif','webp','bmp','tif','tiff','avif','ico','heic'];
+  const base = path.basename(resolved).toLowerCase();
+
+  if (imageExts.includes(ext)) {
+    // Don't ship image bytes in the JSON — client fetches them via /api/file/raw.
+    kind = 'image';
+    binary = true;
+  } else if (!textExts.includes(ext) && !['readme','license','dockerfile','makefile'].includes(base)) {
     binary = true;
   } else {
     const buf = fs.readFileSync(resolved);
@@ -203,8 +211,55 @@ router.get('/file/preview', (req, res) => {
     size: stat.size,
     truncated,
     binary,
+    kind,
     content,
   });
+});
+
+// Streams the raw bytes of a file under $HOME with an appropriate
+// Content-Type. Used by the file preview modal to display images and
+// by anything else that wants direct <img>/<video>/<a download>.
+router.get('/file/raw', (req, res) => {
+  const requested = req.query.path;
+  if (!requested) return res.status(400).json({ error: 'path required' });
+
+  let abs = requested;
+  if (abs.startsWith('~/')) abs = path.join(os.homedir(), abs.slice(2));
+  if (abs === '~') abs = os.homedir();
+  if (!path.isAbsolute(abs)) {
+    const vaultBase = getVaultBase(req.clientSlug);
+    abs = path.join(vaultBase, abs);
+  }
+
+  let resolved;
+  try { resolved = fs.realpathSync(abs); }
+  catch { return res.status(404).json({ error: 'not found' }); }
+
+  const home = fs.realpathSync(os.homedir());
+  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
+    return res.status(403).json({ error: 'outside home directory' });
+  }
+
+  let stat;
+  try { stat = fs.statSync(resolved); }
+  catch { return res.status(404).json({ error: 'not found' }); }
+  if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+
+  const ext = path.extname(resolved).toLowerCase().replace('.', '');
+  const mimes = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    svg: 'image/svg+xml', ico: 'image/x-icon', tif: 'image/tiff',
+    tiff: 'image/tiff', avif: 'image/avif', heic: 'image/heic',
+    pdf: 'application/pdf', mp4: 'video/mp4', webm: 'video/webm',
+    mov: 'video/quicktime', mp3: 'audio/mpeg', wav: 'audio/wav',
+  };
+  const mime = mimes[ext] || 'application/octet-stream';
+
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  fs.createReadStream(resolved).pipe(res);
 });
 
 // Delete vault file

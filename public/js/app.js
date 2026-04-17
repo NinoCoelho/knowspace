@@ -2465,7 +2465,7 @@ if (typeof marked !== 'undefined') {
 // Idempotent and DOM-safe — only walks text nodes, never re-touches
 // already-wrapped anchors.
 
-const FILE_PATH_EXT = '(?:md|markdown|txt|json|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|sh|bash|zsh|html|css|scss|sass|yml|yaml|toml|xml|svg|sql|env|log|ini|conf|cfg|gradle)';
+const FILE_PATH_EXT = '(?:md|markdown|txt|json|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|sh|bash|zsh|html|css|scss|sass|yml|yaml|toml|xml|svg|sql|env|log|ini|conf|cfg|gradle|png|jpg|jpeg|gif|webp|bmp|tiff?|avif|ico|heic)';
 // Permits spaces inside the path (macOS "Mobile Documents" etc).
 function makeFilePathRe() {
   return new RegExp(
@@ -2545,6 +2545,25 @@ async function openFilePreview(absPath) {
     const data = await res.json();
     basenameEl.textContent = data.basename || fallbackName;
     pathEl.textContent = data.path || absPath;
+    if (data.kind === 'image') {
+      // Stream bytes from /api/file/raw with an auth token so the <img>
+      // request hits the same session.
+      const rawUrl = `/api/file/raw?token=${encodeURIComponent(token)}${asParam()}&path=${encodeURIComponent(data.path || absPath)}`;
+      bodyEl.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = rawUrl;
+      img.alt = data.basename || fallbackName;
+      img.style.cssText = 'max-width:100%;height:auto;display:block;margin:0 auto;border-radius:8px;background:var(--bg-secondary);';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;justify-content:center;';
+      wrap.appendChild(img);
+      bodyEl.appendChild(wrap);
+      const note = document.createElement('div');
+      note.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-secondary);text-align:center;';
+      note.textContent = `${data.ext.toUpperCase()} · ${formatBytes(data.size)}`;
+      bodyEl.appendChild(note);
+      return;
+    }
     if (data.binary) {
       bodyEl.innerHTML = `<div style="color:var(--text-secondary);">Binary file — ${formatBytes(data.size)}. Open it locally to view.</div>`;
       return;
