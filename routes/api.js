@@ -7,6 +7,7 @@ const matter = require('gray-matter');
 const Fuse = require('fuse.js');
 const providersRegistry = require('../adapters/providers');
 const { renderEnvelope, envelopeFromCard } = require('../lib/envelope');
+const sessionRouter = require('../lib/session-router');
 
 const KNOWSPACE_CONFIG = path.join(os.homedir(), '.knowspace', 'config.json');
 
@@ -538,6 +539,36 @@ router.post('/kanban/dispatch', async (req, res) => {
       return { path: p, content: inline };
     });
 
+    // Handoff context: if the card already has prior sessions, pull a
+    // short excerpt from the most recent one so the new agent picks up
+    // where the previous one left off. Best effort — never block the
+    // dispatch if the prior session is gone.
+    let conversationExcerpt;
+    let priorSessionMeta;
+    const priorSessions = card.meta?.sessions || [];
+    if (priorSessions.length > 0) {
+      const last = priorSessions[priorSessions.length - 1];
+      try {
+        const priorProvider = sessionRouter.getProviderForSession(last.sessionId);
+        const history = await priorProvider.loadHistory(last.sessionId, 50);
+        const tail = history.slice(-8); // last few turns
+        if (tail.length) {
+          priorSessionMeta = {
+            providerId: last.provider,
+            sessionKey: last.sessionId,
+            messageCount: history.length,
+          };
+          conversationExcerpt = tail.map(m => {
+            const role = m.role === 'assistant' ? 'previous-agent' : 'user';
+            const body = (m.content || '').toString().trim();
+            return `**${role}:** ${body}`;
+          }).join('\n\n');
+        }
+      } catch (err) {
+        console.warn(`[dispatch] could not pull prior excerpt: ${err.message}`);
+      }
+    }
+
     const envelope = envelopeFromCard({
       card,
       boardFile: safe,
@@ -547,6 +578,8 @@ router.post('/kanban/dispatch', async (req, res) => {
       boardTitle: kanban.title,
       laneTitle: cardLane?.title,
     });
+    if (conversationExcerpt) envelope.conversationExcerpt = conversationExcerpt;
+    if (priorSessionMeta) envelope.source.fromSessionKey = priorSessionMeta.sessionKey;
     const text = renderEnvelope(envelope);
 
     const sessionKey = await provider.createSession(agentId, { cwd, label: card.title });
